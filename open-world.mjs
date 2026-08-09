@@ -123,11 +123,38 @@ const launchUrl = shortName
 
 console.error(`[launch] ${launchUrl}`);
 try {
-  // Windows: 用 cmd start 打开 URL scheme
-  execSync(`cmd /c start "" "${launchUrl}"`, { timeout: 10000, windowsHide: true });
-  console.log(JSON.stringify({ ok: true, worldId, worldName, instance: instanceLocation, url: launchUrl }));
+  // 通过 VRChat 命名管道 IPC 直发（VRCX VRCIPC 同款协议）：
+  //   管道: \\.\pipe\VRChatURLLaunchPipe
+  //   协议: 写 UTF-8 URL -> 读 1 字节响应 (1=成功)
+  // VRChat 运行时监听此管道，收到 URL 在游戏内弹确认菜单（不会新开进程）
+  const pipePath = '\\\\.\\pipe\\VRChatURLLaunchPipe';
+  const net = await import('node:net');
+  const result = await new Promise((resolve, reject) => {
+    const client = net.createConnection(pipePath);
+    const timer = setTimeout(() => { client.destroy(); reject(new Error('IPC 连接超时（VRChat 未运行或未监听管道）')); }, 1500);
+    client.on('connect', () => {
+      client.write(Buffer.from(launchUrl, 'utf-8'));
+    });
+    client.on('data', (buf) => {
+      clearTimeout(timer);
+      client.end();
+      resolve(buf[0] === 1);
+    });
+    client.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+
+  if (result) {
+    console.error('[launch] ✅ 已通过 IPC 发送到运行中的 VRChat（游戏内应弹出确认菜单）');
+    console.log(JSON.stringify({ ok: true, via: 'vrcipc', worldId, worldName, instance: instanceLocation, url: launchUrl }));
+  } else {
+    console.error('[launch] ⚠️ IPC 返回失败，尝试 Steam 启动回退');
+    throw new Error('VRChat IPC 返回失败');
+  }
 } catch (e) {
-  console.error(`❌ 打开失败: ${e.message}`);
+  console.error(`❌ IPC 打开失败: ${e.message}`);
   console.log(JSON.stringify({ ok: false, error: e.message, url: launchUrl }));
   process.exit(1);
 }
