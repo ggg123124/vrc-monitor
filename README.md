@@ -274,6 +274,32 @@ node migrate-vrcx0.mjs <VRCX数据库路径> <userId>
 
 > **注意**：userId 可在 VRChat 官网个人资料页查看，格式如 `usr_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`。脚本会自动去掉横线匹配 VRCX 数据库表名格式。
 
+## 🧰 辅助脚本（一次性工具）
+
+### `new-worlds-tracker.mjs` — 新地图追踪
+
+拉取最近 N 天发布的新世界（`system_created_recently` 标签 + 创建时间窗口），写入本仓库 `new_worlds` 表，用 `events` 表的 `user-location` 事件标记「用户是否逛过」，输出热度推荐列表。
+
+```bash
+node new-worlds-tracker.mjs [DAYS] [--dry] [--min-favorites N]
+# 示例：最近 7 天新地图（dry-run 预览）
+node new-worlds-tracker.mjs 7 --dry
+```
+
+- 数据全存本仓库 `vrc-monitor.sqlite3`（`new_worlds` 表），不依赖 VRCX 本机库
+- API 调用走 `core/rate-limiter.js` 限流
+- 输出 JSON：`{ collected, tracked, visited, unvisited, recommended }`
+- 定时场景：cron 每天执行即可保持跟踪列表新鲜
+
+### `open-world.mjs` — 在运行中的 VRChat 内打开世界（本机辅助）
+
+通过命名管道 `\\.\pipe\VRChatURLLaunchPipe` 向**运行中**的 VRChat 客户端发送 `vrchat://launch` 请求，游戏内弹出确认菜单（不会新开进程）。仅支持 Windows + VRChat 本机运行环境。
+
+```bash
+node open-world.mjs "地图名"      # 按名字（API 搜索，精确优先）
+node open-world.mjs wrld_xxx...   # 按 worldId
+```
+
 ## 🛠 故障排查
 
 **Q: WebSocket 连不上？**

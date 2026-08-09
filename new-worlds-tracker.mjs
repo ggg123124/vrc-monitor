@@ -1,22 +1,24 @@
 #!/usr/bin/env node
 /**
- * VRChat 新地图追踪器 (new-worlds-tracker)
- * 
+ * VRChat 新地图追踪器 (new-worlds-tracker.mjs)
+ *
  * 功能：
  * 1. 从 VRChat API 拉取最近 N 天创建的新世界（游戏内「新地图-推荐」分类的判定：
- *    tags 含 system_created_recently，或 created_at 在窗口内）
- * 2. 写入 VRCX 本地收藏「新地图」分组（favorite_world 表，防重复）
- * 3. 与 VRCX gamelog_location 比对，标记每个新地图「已逛/未逛」
+ *    tags 含 system_created_recently，且 created_at 在窗口内）
+ * 2. 写入本仓库自己的数据库（vrc-monitor.sqlite3 的 new_worlds 表），
+ *    不依赖 VRCX 本机库（符合项目「服务不一定跑在 VRChat/VRCX 所在机器」的定位）
+ * 3. 用 events 表的 user-location 事件判断用户是否逛过该世界
  * 4. 按热度（收藏数/在线/热度分）输出推荐列表
- * 
+ *
  * 用法：
  *   node new-worlds-tracker.mjs            # 默认拉最近 7 天
  *   node new-worlds-tracker.mjs 14         # 拉最近 14 天
  *   node new-worlds-tracker.mjs 7 --dry    # 只看不写（dry-run）
- * 
- * 输出 JSON：{ collected, skipped, visited, unvisited, recommended, group }
+ *
+ * 输出 JSON：{ collected, tracked, visited, unvisited, recommended }
  */
 import { VrchatApiClient } from './vrchat-api.js';
+import { RateLimiter } from './core/rate-limiter.js';
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,12 +27,17 @@ import Database from 'better-sqlite3';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CRED_FILE = path.join(__dirname, 'credentials.json');
 const COOKIE_FILE = path.join(__dirname, 'auth_cookie.txt');
-const VRCX_DB = process.env.VRCX_DB || 'C:/Users/Windows/AppData/Roaming/VRCX/VRCX.sqlite3';
+// 数据库位于本仓库（VRC_MONITOR_DIR 定位，符合项目定位）
+const DB_PATH = process.env.VRC_MONITOR_DB || path.join(__dirname, 'vrc-monitor.sqlite3');
+// 当前账号 user_id（从 events 表反查，避免硬编码）
+const SELF_USER_ID = process.env.VRC_MONITOR_USER_ID || '';
 
 const DAYS = parseInt(process.argv[2] || '7', 10);
 const DRY = process.argv.includes('--dry');
-const GROUP = '新地图';           // VRCX 本地收藏分组名
 const MAX_FETCH = 200;            // 最多拉多少条候选（翻页）
+
+// 限流器（与主服务同参数：VRChat API ~30 次/分钟，安全间隔 2.6s）
+const rateLimiter = new RateLimiter({ minInterval: 2600, maxQueueSize: 30 });
 
 async function fetchOtp() {
   const creds = JSON.parse(readFileSync(CRED_FILE, 'utf-8'));
@@ -68,21 +75,24 @@ const creds = JSON.parse(readFileSync(CRED_FILE, 'utf-8'));
 const api = new VrchatApiClient(creds.email, creds.password);
 if (existsSync(COOKIE_FILE)) api.loadCookieFromFile(COOKIE_FILE);
 
-// ── 认证 ──
+// ── 认证（走限流器）──
+let selfUserId = SELF_USER_ID;
 try {
-  const user = await api.ensureAuthWithAutoOtp(fetchOtp);
+  const user = await rateLimiter.execute(() => api.ensureAuthWithAutoOtp(fetchOtp));
   api.saveCookieToFile(COOKIE_FILE);
-  console.error(`[auth] ${user.displayName}`);
+  selfUserId = user.id || SELF_USER_ID;
+  console.error(`[auth] ${user.displayName} (${selfUserId})`);
 } catch (e) {
   console.error('[auth] 失败:', e.message);
   process.exit(1);
 }
 
-// ── 1. 拉新世界（按创建时间倒序，翻页）──
+// ── 1. 拉新世界（按创建时间倒序，翻页，全部走限流器）──
 const cutoff = new Date(Date.now() - DAYS * 24 * 3600 * 1000);
 const candidates = [];
 for (let offset = 0; offset < MAX_FETCH; offset += 100) {
-  const r = await api._request('GET', `/worlds?sort=created&order=descending&n=100&offset=${offset}`);
+  const r = await rateLimiter.execute(() =>
+    api._request('GET', `/worlds?sort=created&order=descending&n=100&offset=${offset}`));
   if (r.status !== 200 || !Array.isArray(r.data) || r.data.length === 0) break;
   candidates.push(...r.data);
   if (r.data.length < 100) break;
@@ -102,84 +112,109 @@ const fresh = candidates
 
 console.error(`[filter] 窗口内新世界 ${fresh.length} 个`);
 
-// ── 2. 读 VRCX 本地数据 ──
-let vrcx;
+// ── 2. 读本仓库数据库：visited（events.user-location）+ 已跟踪（new_worlds）──
+let db;
 try {
-  vrcx = new Database(VRCX_DB, { readonly: true, timeout: 10000 });
+  db = new Database(DB_PATH, { timeout: 10000 });
+  db.pragma('journal_mode = WAL');
 } catch (e) {
-  console.error('[vrcx] 打开失败:', e.message);
+  console.error('[db] 打开失败:', e.message);
   process.exit(1);
 }
 
-// 已逛过的世界（gamelog_location 记录 + 收藏历史）
-const visitedRows = vrcx.prepare(
-  "SELECT DISTINCT world_id FROM gamelog_location WHERE world_id IS NOT NULL AND world_id != ''"
-).all();
+// 用户去过哪些世界（events 表：user-location 为主，friend-location 中
+// user_id=自己的也计入——自己加入实例时会触发 OnPlayerJoined 事件）
+const visitedRows = db.prepare(
+  `SELECT DISTINCT world_id FROM events
+   WHERE world_id IS NOT NULL AND world_id != ''
+     AND (
+       type = 'user-location'
+       OR (type = 'friend-location' AND user_id = @selfUserId)
+     )`
+).all({ selfUserId });
 const visited = new Set(visitedRows.map(r => r.world_id));
 
-// 已有收藏（防重复）
-const favRows = vrcx.prepare(
-  "SELECT world_id FROM favorite_world WHERE group_name = ?"
-).all(GROUP);
-const existingFavs = new Set(favRows.map(r => r.world_id));
-
-// 世界名缓存（给收藏记录填名字）
-const nameCache = new Map();
-for (const w of fresh) nameCache.set(w.id, w.name);
+// 已跟踪的世界（new_worlds 表）
+const existingRows = db.prepare('SELECT world_id FROM new_worlds').all();
+const existingTracked = new Set(existingRows.map(r => r.world_id));
 
 // ── 3. 分类 ──
 const unvisited = fresh.filter(w => !visited.has(w.id));
 const visitedFresh = fresh.filter(w => visited.has(w.id));
-// 过滤：可选最低收藏数阈值（--min-favorites N，默认 0=全部）
-const minFavIdx = process.argv.indexOf('--min-favorites');
-const MIN_FAVORITES = minFavIdx > -1 ? parseInt(process.argv[minFavIdx + 1] || '0', 10) : 0;
-const worthy = MIN_FAVORITES > 0 ? unvisited.filter(w => (w.favorites || 0) >= MIN_FAVORITES) : unvisited;
-const toAdd = worthy.filter(w => !existingFavs.has(w.id));      // 未逛且未收藏 -> 写入
-const alreadyTracked = fresh.filter(w => existingFavs.has(w.id));
+const toAdd = unvisited.filter(w => !existingTracked.has(w.id));  // 未逛且未跟踪 -> 写入
+const alreadyTracked = fresh.filter(w => existingTracked.has(w.id));
 
 // 热度排序（favorites 收藏数 + occupants 在线 + popularity）
 const score = w => (w.favorites || 0) * 2 + (w.occupants || 0) * 10 + (w.popularity || 0);
 const recommended = [...unvisited].sort((a, b) => score(b) - score(a)).slice(0, 10);
 
-// ── 4. 写入 VRCX 本地收藏（非 dry-run）──
+// ── 4. 写入本仓库数据库（非 dry-run）──
 let written = 0;
-if (!DRY && toAdd.length > 0) {
-  const writeDb = new Database(VRCX_DB, { timeout: 15000 });
+let updated = 0;
+if (!DRY) {
   const now = new Date().toISOString();
-  const ins = writeDb.prepare(
-    "INSERT INTO favorite_world (created_at, world_id, group_name) VALUES (?, ?, ?)"
+  const upsert = db.prepare(
+    `INSERT INTO new_worlds (world_id, world_name, author_name, created_at, first_seen_at, favorites, occupants, popularity, visited, visited_at)
+     VALUES (@world_id, @world_name, @author_name, @created_at, @first_seen_at, @favorites, @occupants, @popularity, @visited, @visited_at)
+     ON CONFLICT(world_id) DO UPDATE SET
+       world_name = excluded.world_name,
+       favorites = excluded.favorites,
+       occupants = excluded.occupants,
+       popularity = excluded.popularity,
+       visited = excluded.visited,
+       visited_at = excluded.visited_at`
   );
-  const tx = writeDb.transaction(items => {
+  const markVisited = db.prepare(
+    `UPDATE new_worlds SET visited = 1, visited_at = @visited_at
+     WHERE world_id = @world_id AND visited = 0`
+  );
+
+  const tx = db.transaction(items => {
     for (const w of items) {
-      ins.run(now, w.id, GROUP);
+      upsert.run({
+        world_id: w.id,
+        world_name: w.name || '',
+        author_name: w.authorName || '',
+        created_at: w.created_at || null,
+        first_seen_at: now,
+        favorites: w.favorites || 0,
+        occupants: w.occupants || 0,
+        popularity: w.popularity || 0,
+        visited: visited.has(w.id) ? 1 : 0,
+        visited_at: visited.has(w.id) ? now : null,
+      });
       written++;
     }
+    // 对已跟踪但用户逛过的世界，更新 visited 标记
+    for (const w of fresh) {
+      if (visited.has(w.id)) {
+        const r = markVisited.run({ world_id: w.id, visited_at: now });
+        if (r.changes > 0) updated++;
+      }
+    }
   });
+
   try {
     tx(toAdd);
-    writeDb.close();
-    console.error(`[write] 已收藏 ${written} 个新地图到「${GROUP}」`);
+    console.error(`[write] 新增跟踪 ${written} 个，更新 visited 标记 ${updated} 个`);
   } catch (e) {
     console.error('[write] 写入失败:', e.message);
-    writeDb.close();
   }
-} else if (DRY) {
-  console.error(`[dry-run] 将收藏 ${toAdd.length} 个（未实际写入）`);
+} else {
+  console.error(`[dry-run] 将跟踪 ${toAdd.length} 个（未实际写入）`);
 }
-
-vrcx.close();
 
 // ── 5. 输出报告 ──
 const report = {
-  group: GROUP,
   days: DAYS,
   dryRun: DRY,
   collected: fresh.length,
   unvisited: unvisited.map(w => w.name),
   visited: visitedFresh.map(w => w.name),
-  newlyFavorited: toAdd.map(w => w.name),
+  newlyTracked: toAdd.map(w => w.name),
   alreadyTracked: alreadyTracked.map(w => w.name),
   written,
+  visitedUpdated: updated,
   recommended: recommended.map(w => ({
     name: w.name,
     id: w.id,
@@ -192,3 +227,4 @@ const report = {
   })),
 };
 console.log(JSON.stringify(report, null, 2));
+db.close();

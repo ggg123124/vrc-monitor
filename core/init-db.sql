@@ -98,3 +98,18 @@ CREATE TABLE IF NOT EXISTS group_cache (
   member_count INTEGER DEFAULT 0,
   updated_at TEXT DEFAULT (datetime('now'))
 );
+
+-- 新地图追踪（new-worlds-tracker.mjs 维护：新发布世界的收藏/逛过标记）
+CREATE TABLE IF NOT EXISTS new_worlds (
+  world_id TEXT PRIMARY KEY,
+  world_name TEXT NOT NULL DEFAULT '',
+  author_name TEXT DEFAULT '',
+  created_at TEXT,               -- 世界创建时间（API）
+  first_seen_at TEXT,            -- 首次被本工具记录的时间
+  favorites INTEGER DEFAULT 0,   -- 最近一次抓取时的收藏数（热度）
+  occupants INTEGER DEFAULT 0,   -- 在线人数
+  popularity INTEGER DEFAULT 0,
+  visited INTEGER DEFAULT 0,     -- 用户是否逛过（1=逛过）
+  visited_at TEXT                -- 逛过的时间（若已逛）
+);
+CREATE INDEX IF NOT EXISTS idx_new_worlds_visited ON new_worlds(visited);
