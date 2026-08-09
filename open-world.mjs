@@ -117,8 +117,12 @@ try {
 }
 
 // ── 2. 打开 VRChat ──
-const launchUrl = shortName
-  ? `vrchat://launch?ref=vrcx.app&id=${worldId}&shortName=${encodeURIComponent(shortName)}`
+// VRCX 源码（src/stores/launch.js）: id 参数是完整 location（含实例号），
+// 如 wrld_xxx:01277~region(jp)，不是 worldId！只有带实例号 VRChat 才能定位房间
+const launchUrl = instanceLocation
+  ? (shortName
+      ? `vrchat://launch?ref=vrcx.app&id=${instanceLocation}&shortName=${encodeURIComponent(shortName)}`
+      : `vrchat://launch?ref=vrcx.app&id=${instanceLocation}`)
   : `vrchat://launch?ref=vrcx.app&id=${worldId}`;
 
 console.error(`[launch] ${launchUrl}`);
