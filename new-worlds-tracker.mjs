@@ -117,6 +117,10 @@ let db;
 try {
   db = new Database(DB_PATH, { timeout: 10000 });
   db.pragma('journal_mode = WAL');
+  // 自建表：执行 init-db.sql（幂等 IF NOT EXISTS），不依赖服务先跑过
+  // 新部署/服务未升级时表也可能不存在，这里保证脚本独立可用
+  const ddl = readFileSync(path.join(__dirname, 'core', 'init-db.sql'), 'utf-8');
+  db.exec(ddl);
 } catch (e) {
   console.error('[db] 打开失败:', e.message);
   process.exit(1);
