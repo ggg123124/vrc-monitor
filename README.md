@@ -291,15 +291,6 @@ node new-worlds-tracker.mjs 7 --dry
 - 输出 JSON：`{ collected, tracked, visited, unvisited, recommended }`
 - 定时场景：cron 每天执行即可保持跟踪列表新鲜
 
-### `open-world.mjs` — 在运行中的 VRChat 内打开世界（本机辅助）
-
-通过命名管道 `\\.\pipe\VRChatURLLaunchPipe` 向**运行中**的 VRChat 客户端发送 `vrchat://launch` 请求，游戏内弹出确认菜单（不会新开进程）。仅支持 Windows + VRChat 本机运行环境。
-
-```bash
-node open-world.mjs "地图名"      # 按名字（API 搜索，精确优先）
-node open-world.mjs wrld_xxx...   # 按 worldId
-```
-
 ## 🛠 故障排查
 
 **Q: WebSocket 连不上？**
