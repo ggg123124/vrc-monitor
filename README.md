@@ -35,7 +35,7 @@
 - ✅ **历史数据迁移** — 从 VRCX-0 导入 10 个月的 33 万条活动记录
 - ✅ **世界名缓存** — 自动解析 `wrld_xxx` 为可读世界名（懒刷新：缓存命中直接用，`forceRefresh: true` 手动刷新防改名陈旧）
 - ✅ **关注名单** — 标记核心好友，活动时特别通知
-- ✅ **MCP 工具接口** — 48 个工具供 Hermes / 任意 MCP 客户端调用
+- ✅ **MCP 工具接口** — 54 个工具供 Hermes / 任意 MCP 客户端调用
 - ✅ **数据库自动备份** — 启动 + 每 24h 自动备份（WAL 在线备份，无需停机），保留最近 2 份到 `backups/`；`backup_database` 工具可随时手动触发
 - ✅ **Hermes 插件托管** — 会话自动拉起、崩溃自愈、`vrc_status` 等管理工具
 
@@ -167,7 +167,7 @@ cp desktop/plugin.js "$HERMES_HOME/desktop-plugins/vrc-monitor/"
 - **双路检测**：状态文件 pid 存活 **或** 端口探测成功，均可识别为运行中（防状态文件丢失误判）
 - **日志**：`$HERMES_HOME/workspace/vrc-monitor/monitor.log`
 
-## 🔌 MCP 工具（48 个）
+## 🔌 MCP 工具（54 个）
 
 服务监听 `http://127.0.0.1:8799/mcp`，通过 HTTP SSE 提供 MCP 协议。Hermes 用户可在 `$HERMES_HOME/config.yaml`（Windows 为 `%LOCALAPPDATA%\hermes\config.yaml`）配置：
 
@@ -243,6 +243,12 @@ mcp_servers:
 | `remove_gallery_image` | 删除图库图片（不可逆，需 `confirm: true`） | `fileId` | `confirm` |
 | `send_invite` | 邀请好友加入**你当前所在房间**（拉人进房） | `userId`、`worldId`、`instanceId` | `message`（附带消息） |
 | `request_invite` | 请求好友**邀请你加入 TA 的房间**（默认消息 "Can I join you?"） | `userId` | `message` |
+| `get_favorite_friends_locations` | **好友收藏夹位置**：列出收藏分组内好友当前位置（支持 `searchName` 按名直查），按推荐度排序，private 自动排除 | `groupName`/`favoriteGroupId`/`searchName` | — |
+| `recommend_join` | **推荐加入**：全部在线好友综合评分推荐（熟悉度 + 收藏夹权重 + 房间场景 + 实例人数/类型） | `limit`、`minScore` | — |
+| `set_join_preference` | 设置推荐偏好（自然语言，如「我不喜欢人太多」→ 爆满重罚） | `preference` | — |
+| `get_join_preference` | 查询当前推荐偏好 | — | — |
+| `record_join_choice` | 记录一次推荐选择（自动补全上下文，≥5 次后自动学习权重） | `userId`/`displayName` | — |
+| `get_join_learning` | 查看选择学习状态与生效的权重调整 | — | — |
 | `create_instance` | **创建新房间**：worldId 必填；type（public/hidden/friends/private/group，默认 hidden）、region（us/eu/jp，默认 jp）可选；非 public 自动带 ownerId=当前用户（不带会 400 "Invalid owner ID"）；返回 `location` 可直接给 invite_myself | `worldId` | `type`、`region`、`instanceId`、`groupAccessType` |
 | `invite_myself` | **邀请自己传送进指定实例**：`location`（worldId:instanceId 完整串）或 `worldId`+`instanceId` 分开传；客户端收到 invite 通知后接受即传送 | `location` 或 `worldId`+`instanceId` | — |
 | `send_friend_request` | **发送好友请求**（添加好友）：`userId` 直接加，或 `displayName` 精确匹配（不区分大小写）后加 | `userId` 或 `displayName` 至少一个 | — |

@@ -15,7 +15,7 @@ metadata:
 - 服务启动：项目目录下 `node start-monitor.js`（首次需配置 `credentials.json`，见 AGENTS.md）
 - 数据库：本地 SQLite（WebSocket 实时采集事件，含历史上线/位置/同屏记录）
 
-## MCP 工具（48 个）
+## MCP 工具（54 个）
 
 | 工具 | 说明 |
 |------|------|
