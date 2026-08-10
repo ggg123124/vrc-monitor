@@ -110,6 +110,30 @@ CREATE TABLE IF NOT EXISTS new_worlds (
   occupants INTEGER DEFAULT 0,   -- 在线人数
   popularity INTEGER DEFAULT 0,
   visited INTEGER DEFAULT 0,     -- 用户是否逛过（1=逛过）
-  visited_at TEXT                -- 逛过的时间（若已逛）
+  visited_at TEXT,               -- 逛过的时间（若已逛）
+  sleep_ok INTEGER DEFAULT 0        -- 适合睡觉/放松标记（推荐评分与「开个睡觉图」用）
 );
 CREATE INDEX IF NOT EXISTS idx_new_worlds_visited ON new_worlds(visited);
+
+-- 推荐选择学习（recommend_join 用户选择记录，个性化权重学习的数据源）
+-- 每次用户从推荐列表选择某人/某图记录一条快照，含当时列表基线用于对比分析
+CREATE TABLE IF NOT EXISTS join_choices (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at TEXT DEFAULT (datetime('now')),
+  user_id TEXT DEFAULT '',          -- 被选择的好友 userId
+  display_name TEXT DEFAULT '',     -- 被选择的好友显示名
+  world_id TEXT DEFAULT '',
+  world_name TEXT DEFAULT '',
+  instance_type TEXT DEFAULT '',    -- public/friends/hidden/group
+  instance_users INTEGER DEFAULT 0,
+  instance_capacity INTEGER DEFAULT 0,
+  fill_ratio REAL DEFAULT 0,
+  familiarity_score INTEGER DEFAULT 0,
+  is_quiet_world INTEGER DEFAULT 0,
+  recommend_score INTEGER DEFAULT 0,
+  rank_in_list INTEGER DEFAULT 0,   -- 在推荐列表中的排名（1=第一）
+  list_count INTEGER DEFAULT 0,     -- 当时列表长度
+  list_avg_users REAL DEFAULT 0,    -- 当时列表平均人数（基线）
+  list_avg_fill REAL DEFAULT 0,     -- 当时列表平均填充率（基线）
+  list_quiet_ratio REAL DEFAULT 0   -- 当时列表安静图占比（基线，0-1）
+);

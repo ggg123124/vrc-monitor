@@ -29,6 +29,20 @@ const DB_PATH = path.join(__dirname, 'vrc-monitor.sqlite3');
 const BACKUP_DIR = path.join(__dirname, 'backups');
 const BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000; // 每 24h 自动备份
 
+// ── .env 加载（只取 VRC_MONITOR_*，不覆盖进程已有环境变量）──
+// 个人配置（分组权重/联系人名单等）放仓库根 .env（.gitignore 已忽略），不硬编码进代码
+try {
+  const envFile = path.join(__dirname, '.env');
+  if (existsSync(envFile)) {
+    for (const line of readFileSync(envFile, 'utf-8').split(/\r?\n/)) {
+      const m = /^([A-Z_]+)=(.*)$/.exec(line.trim());
+      if (m && m[1].startsWith('VRC_MONITOR_')) {
+        process.env[m[1]] = m[2];
+      }
+    }
+  }
+} catch (e) { /* .env 加载失败不阻断 */ }
+
 // ── 全局状态 ──
 let storage;
 let api;
@@ -706,6 +720,61 @@ const CUSTOM_TOOLS = [
       required: ['groupId'],
     },
   },
+  {
+    name: 'get_favorite_friends_locations',
+    description: '[query·好友收藏] 列出某个好友收藏夹（线上收藏分组）内所有好友的当前位置列表。可指定 groupName（如 "new"、"join" 等收藏夹名）或 favoriteGroupId；不指定则列出全部分组。返回按推荐度排序：在线且实例可加入的在前（public/friends/hidden=friend+/group 实例均可加入），仅 private 实例自动排除（看不到位置），按实例内玩家数/容量比 + 收藏热度综合评分。也可用 searchName 直接按名字在好友列表里查某人的位置（能看到具体位置即代表可加入，标记 joinable；纯 private 才进不去）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        groupName: { type: 'string', description: '收藏夹名（displayName），如 "new"/"join"。不填则返回全部分组概览' },
+        favoriteGroupId: { type: 'string', description: '收藏分组 id（fvgrp_...），与 groupName 二选一' },
+        searchName: { type: 'string', description: '按名字（模糊匹配，不区分大小写）在好友列表里直接查某人位置，返回单人或多人结果。与 groupName/favoriteGroupId 互斥' },
+      },
+    },
+  },
+  {
+    name: 'recommend_join',
+    description: '[query·推荐加入] 查看全部在线好友在做什么，按推荐度排序给出可加入的推荐。综合评分：熟悉度（最近30天+历史一年共玩次数，来自本地 events 同屏统计）+ 收藏夹分组权重（可配置）+ 房间场景（睡觉图人少=电灯泡风险降权）+ 实例人数/容量比 + 实例类型（public/friends/friend+/group 可加入，private 排除）。返回 TopN 推荐及理由。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        limit: { type: 'number', default: 10, description: '返回数量（默认 10）' },
+        minScore: { type: 'number', default: 0, description: '最低推荐分过滤（默认 0，负分=电灯泡/联系人风险）' },
+      },
+    },
+  },
+  {
+    name: 'set_join_preference',
+    description: '[配置·推荐偏好] 用自然语言设置「推荐加入」的评分偏好，持久化到 config 表，下次推荐自动生效。例：「我不喜欢人太多」→ 爆满惩罚加重(80)、人数权重降低(×1.5)、冷清不罚；「喜欢热闹」→ 人数权重加强(×4)、爆满轻罚(20)；「恢复默认」→ 清除偏好。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        preference: { type: 'string', description: '自然语言偏好，如「我不喜欢人太多」「喜欢热闹」「恢复默认」' },
+      },
+      required: ['preference'],
+    },
+  },
+  {
+    name: 'get_join_preference',
+    description: '[配置·推荐偏好] 查询当前「推荐加入」的评分偏好（含解析结果与设置时间）。',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'record_join_choice',
+    description: '[配置·选择学习] 记录一次「从推荐列表中选择加入」的行为（用户选择谁/哪张图）。服务端自动从最近一次 recommend_join 的快照补全上下文（人数/类型/熟悉度/排名/列表基线），写入 join_choices 表；积累 ≥5 次后自动分析用户偏好（选人少→避人潮、总选熟人→熟悉度加权等）并应用到推荐权重。用法：先运行 recommend_join 拉列表，再从列表里选一个人记录：传 userId 或 displayName（模糊匹配）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        userId: { type: 'string', description: '被选择好友的 userId（usr_...）' },
+        displayName: { type: 'string', description: '被选择好友的显示名（模糊匹配，与 userId 二选一）' },
+      },
+    },
+  },
+  {
+    name: 'get_join_learning',
+    description: '[配置·选择学习] 查看推荐选择学习状态：累计选择数、自动分析出的偏好（人数倾向/熟悉度加权/安静图倾向）与生效中的权重调整。',
+    inputSchema: { type: 'object', properties: {} },
+  },
 ];
 
 // ── 工具处理器 ──
@@ -733,6 +802,645 @@ function parseLocation(loc) {
     instanceId: instMatch ? instMatch[1] : null,
     region: regionMatch ? regionMatch[1] : null,
     groupAccessType: gAccessMatch ? gAccessMatch[1] : null,
+  };
+}
+
+async function handleGetFavoriteFriendsLocations({ groupName, favoriteGroupId, searchName }) {
+  const nicknames = storage.getNicknames({});
+  const nicknameMap = new Map();
+  for (const item of nicknames) {
+    if (item.userId) nicknameMap.set(item.userId, item.nickname);
+  }
+
+  // 0. searchName 模式：直接在好友列表（含离线=false）里按名字查位置
+  if (searchName) {
+    const kw = searchName.toLowerCase();
+    const friendsR = await rateLimiter.execute(() => api._request('GET', '/auth/user/friends?offline=false'));
+    if (friendsR.status !== 200) throw new Error(`API error: ${friendsR.status}`);
+    const onlineFriends = Array.isArray(friendsR.data) ? friendsR.data : [];
+    // 模糊匹配（在线好友里找；找不到再提示）
+    const matched = onlineFriends.filter(f =>
+      f.displayName.toLowerCase().includes(kw) ||
+      (f.id || '').toLowerCase() === kw);
+    if (matched.length === 0) {
+      // 查离线好友列表确认是否好友
+      const allR = await rateLimiter.execute(() => api._request('GET', '/auth/user/friends?offline=true'));
+      const allFriends = (allR.status === 200 && Array.isArray(allR.data)) ? allR.data : [];
+      const matchedAll = allFriends.filter(f => f.displayName.toLowerCase().includes(kw));
+      if (matchedAll.length === 0) {
+        throw new Error(`好友列表中没有找到「${searchName}」。`);
+      }
+      return {
+        mode: 'search',
+        query: searchName,
+        offline: matchedAll.map(f => ({ userId: f.id, displayName: f.displayName, online: false })),
+        message: '好友当前离线',
+      };
+    }
+    // 在线：逐个解析位置（复用下方逻辑，但保留 private/hidden 并标记 joinable）
+    const results = [];
+    const worldCache = new Map();
+    const instanceInfo = new Map();
+    async function getWorldNameSafe(worldId) {
+      if (worldCache.has(worldId)) return worldCache.get(worldId);
+      let name = worldId;
+      const cached = storage.getWorldName(worldId);
+      if (cached && cached.name) {
+        name = cached.name;
+      } else {
+        const r = await rateLimiter.execute(() => api._request('GET', `/worlds/${worldId}`));
+        if (r.status === 200 && r.data && r.data.name) {
+          name = r.data.name;
+          try { storage.upsertWorld({ worldId, name, authorId: r.data.authorId || '', authorName: r.data.authorName || '' }); } catch (e) {}
+        }
+      }
+      worldCache.set(worldId, name);
+      return name;
+    }
+    for (const f of matched) {
+      const loc = parseLocation(f.location || 'private');
+      if (!loc) continue;
+      const isJoinable = loc.type === 'public' || loc.type === 'friends' || loc.type === 'group' || loc.type === 'hidden';
+      const worldName = loc.worldId ? await getWorldNameSafe(loc.worldId) : null;
+      const entry = {
+        userId: f.id,
+        displayName: f.displayName,
+        online: true,
+        joinable: isJoinable,
+        instanceTypeDisplay: loc.type === 'hidden' ? 'friend+（好友+）' : (loc.type || 'unknown'),
+        location: f.location || 'private',
+        worldId: loc.worldId || null,
+        worldName,
+        instanceType: loc.type || 'unknown',
+        instanceId: loc.instanceId || '',
+        region: loc.region || '',
+        status: f.status,
+        statusDescription: f.statusDescription,
+        platform: f.platform,
+        nickname: nicknameMap.get(f.id) || null,
+        avatarImageUrl: f.currentAvatarThumbnailImageUrl,
+      };
+      // 可加入的才查实例玩家数（private 查了也进不去）
+      if (isJoinable && loc.instanceId && f.location && !f.location.includes('~private')) {
+        const instKey = f.location;
+        if (!instanceInfo.has(instKey)) {
+          try {
+            const r = await rateLimiter.execute(() => api._request('GET', `/instances/${instKey}`));
+            if (r.status === 200 && r.data) {
+              instanceInfo.set(instKey, { nUsers: r.data.n_users || 0, capacity: r.data.capacity || 0 });
+            } else {
+              instanceInfo.set(instKey, null);
+            }
+          } catch (e) {
+            instanceInfo.set(instKey, null);
+          }
+        }
+        const inst = instanceInfo.get(instKey);
+        if (inst) {
+          entry.instanceUsers = inst.nUsers;
+          entry.instanceCapacity = inst.capacity;
+          entry.fillRatio = inst.capacity > 0 ? +(inst.nUsers / inst.capacity).toFixed(2) : 0;
+        }
+      }
+      results.push(entry);
+    }
+    return { mode: 'search', query: searchName, friends: results };
+  }
+
+  // 1. 全部好友收藏分组
+  const groupsR = await rateLimiter.execute(() => api._request('GET', '/favorite/groups?type=friend&n=100'));
+  if (groupsR.status !== 200) throw new Error(`API error: ${groupsR.status}`);
+  const groups = Array.isArray(groupsR.data) ? groupsR.data : [];
+
+  if (!groupName && !favoriteGroupId) {
+    // 概览模式：返回全部分组 + 成员数（用分组的 name=group_N 匹配 tags）
+    const favsAllR = await rateLimiter.execute(() => api._request('GET', '/favorites?type=friend&n=100'));
+    const favsAll = (favsAllR.status === 200 && Array.isArray(favsAllR.data)) ? favsAllR.data : [];
+    // 按 tags[0]（group_N）分组统计
+    const byGroupTag = new Map();
+    for (const f of favsAll) {
+      const tag = (f.tags || [])[0] || '';
+      byGroupTag.set(tag, (byGroupTag.get(tag) || 0) + 1);
+    }
+    const overview = groups.map(g => ({
+      groupId: g.id,
+      groupName: g.displayName || g.id,
+      groupTag: g.name || '',
+      memberCount: byGroupTag.get(g.name) || 0,
+    }));
+    return { mode: 'overview', groups: overview };
+  }
+
+  // 2. 定位分组
+  let group = null;
+  if (favoriteGroupId) {
+    group = groups.find(g => g.id === favoriteGroupId) || null;
+  } else if (groupName) {
+    group = groups.find(g => (g.displayName || '') === groupName) ||
+            groups.find(g => (g.displayName || '').toLowerCase() === groupName.toLowerCase()) || null;
+  }
+  if (!group) {
+    const available = groups.map(g => g.displayName || g.id);
+    throw new Error(`找不到收藏夹「${groupName || favoriteGroupId}」。可用分组: ${available.join(' / ')}`);
+  }
+
+  // 3. 组内好友：API 的 groupId 参数被忽略（永远返回全部），改用分组的 name=group_N 匹配 tags[0]
+  const groupTag = group.name || '';
+  const favsR = await rateLimiter.execute(() => api._request('GET', '/favorites?type=friend&n=100'));
+  if (favsR.status !== 200) throw new Error(`API error: ${favsR.status}`);
+  const allFavs = Array.isArray(favsR.data) ? favsR.data : [];
+  const favs = groupTag
+    ? allFavs.filter(f => (f.tags || [])[0] === groupTag)
+    : allFavs;
+
+  // 4. 逐个查好友位置（复用在线好友列表更快：一次请求拿到全部在线好友位置）
+  //    先用 /auth/user/friends?offline=false 拿在线好友，再对组内好友查详情
+  const onlineR = await rateLimiter.execute(() => api._request('GET', '/auth/user/friends?offline=false'));
+  const onlineFriends = (onlineR.status === 200 && Array.isArray(onlineR.data)) ? onlineR.data : [];
+  const onlineMap = new Map(onlineFriends.map(f => [f.id, f]));
+
+  // 组内每个好友：在线直接取位置；离线标记
+  const members = [];
+  const onlineIds = [];
+  for (const f of favs) {
+    const uid = f.favoriteId;
+    const online = onlineMap.get(uid);
+    if (online) {
+      members.push({ favoriteId: f.id, userId: uid, displayName: online.displayName, online: true, location: online.location || 'private', status: online.status, platform: online.platform, avatarImageUrl: online.currentAvatarThumbnailImageUrl });
+      onlineIds.push(uid);
+    } else {
+      members.push({ favoriteId: f.id, userId: uid, displayName: null, online: false });
+    }
+  }
+
+  // 5. 在线好友：补世界名 + 实例信息（玩家数/容量/类型），算推荐度
+  //    位置解析 + 世界名缓存；实例详情批量查（限流）
+  const worldCache = new Map();
+  const instanceInfo = new Map();
+
+  async function getWorldNameSafe(worldId) {
+    if (worldCache.has(worldId)) return worldCache.get(worldId);
+    let name = worldId;
+    const cached = storage.getWorldName(worldId);
+    if (cached && cached.name) {
+      name = cached.name;
+    } else {
+      const r = await rateLimiter.execute(() => api._request('GET', `/worlds/${worldId}`));
+      if (r.status === 200 && r.data && r.data.name) {
+        name = r.data.name;
+        try { storage.upsertWorld({ worldId, name, authorId: r.data.authorId || '', authorName: r.data.authorName || '' }); } catch (e) {}
+      }
+    }
+    worldCache.set(worldId, name);
+    return name;
+  }
+
+  const detailed = [];
+  for (const m of members) {
+    if (!m.online) continue;
+    const loc = parseLocation(m.location || 'private');
+    // private 实例自动排除（Invite：仅被邀请者本人可进）
+    // 注意：hidden 实例 = 游戏里的 friend+(好友+)实例，好友及好友的好友可进，不排除！
+    if (!loc || loc.type === 'private' ||
+        m.location === 'private' || m.location === 'offline' || m.location === 'traveling') {
+      continue;
+    }
+    // traveling 也跳过（不在具体世界）
+    if (loc.type === 'traveling') continue;
+
+    const worldName = await getWorldNameSafe(loc.worldId);
+    const entry = {
+      userId: m.userId,
+      displayName: m.displayName,
+      location: m.location,
+      worldId: loc.worldId,
+      worldName,
+      instanceType: loc.type,
+      instanceId: loc.instanceId || '',
+      region: loc.region || '',
+      status: m.status,
+      platform: m.platform,
+      nickname: nicknameMap.get(m.userId) || null,
+      avatarImageUrl: m.avatarImageUrl,
+    };
+
+    // 实例详情：玩家数/容量（限流；失败不阻断）
+    // VRChat 实例查询 key 是完整 location 且不能 URL 编码（编码 :()~ 会 400 malformed url）
+    if (loc.instanceId) {
+      const instKey = m.location;   // 完整 location 字符串
+      if (!instanceInfo.has(instKey)) {
+        try {
+          const r = await rateLimiter.execute(() => api._request('GET', `/instances/${instKey}`));
+          if (r.status === 200 && r.data) {
+            instanceInfo.set(instKey, {
+              nUsers: r.data.n_users || 0,
+              capacity: r.data.capacity || 0,
+              recommendedCapacity: r.data.recommendedCapacity || 0,
+              type: r.data.type || '',
+            });
+          } else {
+            instanceInfo.set(instKey, null);
+          }
+        } catch (e) {
+          instanceInfo.set(instKey, null);
+        }
+      }
+      const inst = instanceInfo.get(instKey);
+      if (inst) {
+        entry.instanceUsers = inst.nUsers;
+        entry.instanceCapacity = inst.capacity;
+        entry.fillRatio = inst.capacity > 0 ? +(inst.nUsers / inst.capacity).toFixed(2) : 0;
+      }
+    }
+
+    // 推荐度：在线人数/容量比（人多热闹但别爆满）+ 实例类型权重
+    let score = 0;
+    if (entry.instanceUsers !== undefined) {
+      const fill = entry.fillRatio || 0;
+      // 黄金区间 30%-80%：人多但不挤；低于 30% 略减；超过 90% 大幅减（难挤进去）
+      if (fill >= 0.3 && fill <= 0.8) score += 50;
+      else if (fill > 0.9) score -= 40;
+      else if (fill < 0.1) score -= 10;
+      score += entry.instanceUsers * 3;
+    }
+    if (loc.type === 'public') score += 20;        // 公开实例最容易进
+    else if (loc.type === 'friends') score += 10;  // 好友实例
+    else if (loc.type === 'hidden') score += 10;   // friend+(好友+)实例，好友可进
+    else if (loc.type === 'group') score += 5;     // 群组实例需同群
+    if (m.status === 'active') score += 10;        // 活跃状态优先
+    entry.recommendScore = Math.round(score);
+    detailed.push(entry);
+  }
+
+  // 排序：推荐度降序
+  detailed.sort((a, b) => (b.recommendScore || 0) - (a.recommendScore || 0));
+
+  const onlineCount = members.filter(m => m.online).length;
+  const joinableCount = detailed.length;
+
+  return {
+    mode: 'list',
+    groupName: group.displayName || group.id,
+    groupId: group.id,
+    memberCount: members.length,
+    onlineCount,
+    joinableCount,
+    excludedPrivate: onlineCount - joinableCount,
+    friends: detailed,
+    offline: members.filter(m => !m.online).map(m => ({ userId: m.userId })),
+  };
+}
+
+// ── 推荐偏好：自然语言 → 权重调整（持久化到 config 表 join_prefs）──
+function parseJoinPreference(text) {
+  const t = String(text || '').trim();
+  if (!t) return { error: 'preference 不能为空' };
+  // 重置
+  if (/(恢复|取消|重置|默认|清空|不要偏好)/.test(t)) {
+    return { reset: true, message: '已恢复默认（无偏好）' };
+  }
+  let crowd = 'normal';
+  // 爱热闹（优先匹配，避免「喜欢人多」被误判为避人潮）
+  if (/(喜欢|爱|希望|想).*(热闹|人多|扎堆)|人越多越好|热闹一点|人多热闹/.test(t)) crowd = 'love';
+  // 避人潮
+  else if (/(不喜欢|讨厌|怕|不想|别).*(人多|热闹|挤|扎堆)|人.*太多|太挤|人少.*好|避开.*人群|清净/.test(t)) crowd = 'avoid';
+  if (crowd === 'normal' && !/(热闹|人多|爆满|挤|人群)/.test(t)) {
+    return { error: `未能识别偏好「${t}」——可试试「我不喜欢人太多」「喜欢热闹」「恢复默认」` };
+  }
+  const labels = { avoid: '避人潮（爆满重罚-80、人数权重×1.5、冷清不罚）', love: '爱热闹（人数权重×4、爆满轻罚-20）', normal: '默认' };
+  return { crowd, label: labels[crowd] };
+}
+
+async function handleSetJoinPreference({ preference } = {}) {
+  const parsed = parseJoinPreference(preference);
+  if (parsed.error) throw new Error(parsed.error);
+  if (parsed.reset) {
+    storage.setConfig('join_prefs', '');
+    return { success: true, reset: true, message: parsed.message };
+  }
+  const prefs = { crowd: parsed.crowd, label: parsed.label, updatedAt: new Date().toISOString() };
+  storage.setConfig('join_prefs', JSON.stringify(prefs));
+  return { success: true, ...prefs, message: `已保存：${parsed.label}` };
+}
+
+async function handleGetJoinPreference() {
+  try {
+    const raw = storage.getConfig('join_prefs');
+    if (!raw) return { preference: null, message: '当前无偏好（默认：人数×3、爆满-40、冷清-10）' };
+    return { preference: JSON.parse(raw) };
+  } catch (e) {
+    return { preference: null, error: `读取失败: ${e.message}` };
+  }
+}
+
+// ── 推荐选择学习：记录用户从推荐列表的选择，积累后自动分析偏好调整权重 ──
+let lastRecommendSnapshot = null; // 最近一次推荐列表快照（record_join_choice 补全上下文用）
+
+function computeListBaseline(top) {
+  const rows = top.filter(f => f.instanceUsers !== undefined && f.instanceUsers !== null);
+  if (rows.length === 0) return { list_count: top.length, list_avg_users: 0, list_avg_fill: 0, list_quiet_ratio: 0 };
+  const avgUsers = rows.reduce((s, f) => s + (f.instanceUsers || 0), 0) / rows.length;
+  const avgFill = rows.reduce((s, f) => s + (f.fillRatio || 0), 0) / rows.length;
+  const quietRatio = rows.filter(f => f.isQuietWorld).length / rows.length;
+  return {
+    list_count: top.length,
+    list_avg_users: Math.round(avgUsers * 10) / 10,
+    list_avg_fill: Math.round(avgFill * 100) / 100,
+    list_quiet_ratio: Math.round(quietRatio * 100) / 100,
+  };
+}
+
+function analyzeJoinLearning() {
+  const MIN_SAMPLES = 5;
+  const rows = storage._query('SELECT * FROM join_choices ORDER BY id DESC LIMIT 20');
+  if (rows.length < MIN_SAMPLES) {
+    return { enabled: false, samples: rows.length, minSamples: MIN_SAMPLES, crowd: null, familiarityMult: 1, quietBias: false };
+  }
+  const avg = (arr) => (arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : 0);
+  const avgChosenUsers = avg(rows.map(r => r.instance_users));
+  const avgListUsers = avg(rows.map(r => r.list_avg_users));
+  const avgFam = avg(rows.map(r => r.familiarity_score));
+  const quietRatio = rows.filter(r => r.is_quiet_world).length / rows.length;
+  // 人数倾向：选择平均人数 vs 当时列表平均人数（<60% 避人潮，>130% 爱热闹）
+  let crowd = null;
+  if (avgListUsers > 3 && avgChosenUsers < avgListUsers * 0.6) crowd = 'avoid';
+  else if (avgListUsers > 3 && avgChosenUsers > avgListUsers * 1.3) crowd = 'love';
+  // 熟悉度倾向：60% 以上选择熟悉度>=15 的好友 → 熟悉度加权
+  const famPrefer = avgFam >= 15 && rows.filter(r => r.familiarity_score >= 15).length >= Math.ceil(rows.length * 0.6);
+  // 安静图倾向：50% 以上选择安静图 → 安静图偏好
+  const quietBias = quietRatio >= 0.5;
+  const learning = {
+    enabled: true,
+    samples: rows.length,
+    crowd,
+    familiarityMult: famPrefer ? 1.2 : 1,
+    quietBias,
+    stats: {
+      avgChosenUsers: Math.round(avgChosenUsers * 10) / 10,
+      avgListUsers: Math.round(avgListUsers * 10) / 10,
+      avgFamiliarity: Math.round(avgFam * 10) / 10,
+      quietRatio: Math.round(quietRatio * 100) / 100,
+    },
+    updatedAt: new Date().toISOString(),
+  };
+  storage.setConfig('join_learning', JSON.stringify(learning));
+  return learning;
+}
+
+async function handleRecordJoinChoice({ userId, displayName } = {}) {
+  if (!lastRecommendSnapshot) throw new Error('还没有推荐列表——请先运行 recommend_join 再记录选择');
+  const top = lastRecommendSnapshot.top || [];
+  if (top.length === 0) throw new Error('最近一次推荐列表为空，无法记录');
+  let hit = null;
+  if (userId) hit = top.find(f => f.userId === userId);
+  if (!hit && displayName) {
+    const dn = String(displayName).toLowerCase();
+    hit = top.find(f => (f.displayName || '').toLowerCase().includes(dn));
+  }
+  if (!hit) throw new Error(`推荐列表中没有找到「${displayName || userId}」——请先运行 recommend_join 并从中选择`);
+  const rank = top.indexOf(hit) + 1;
+  const baseline = lastRecommendSnapshot.baseline;
+  storage._run(
+    `INSERT INTO join_choices (user_id, display_name, world_id, world_name, instance_type, instance_users, instance_capacity, fill_ratio, familiarity_score, is_quiet_world, recommend_score, rank_in_list, list_count, list_avg_users, list_avg_fill, list_quiet_ratio)
+     VALUES ($userId, $displayName, $worldId, $worldName, $instanceType, $instanceUsers, $instanceCapacity, $fillRatio, $familiarityScore, $isQuietWorld, $recommendScore, $rank, $listCount, $listAvgUsers, $listAvgFill, $listQuietRatio)`,
+    {
+      $userId: hit.userId, $displayName: hit.displayName, $worldId: hit.worldId || '',
+      $worldName: hit.worldName || '', $instanceType: hit.instanceType || '',
+      $instanceUsers: hit.instanceUsers || 0, $instanceCapacity: hit.instanceCapacity || 0,
+      $fillRatio: hit.fillRatio || 0, $familiarityScore: (hit.familiarity && hit.familiarity.score) || 0,
+      $isQuietWorld: hit.isQuietWorld ? 1 : 0, $recommendScore: hit.recommendScore || 0,
+      $rank: rank, $listCount: baseline.list_count, $listAvgUsers: baseline.list_avg_users,
+      $listAvgFill: baseline.list_avg_fill, $listQuietRatio: baseline.list_quiet_ratio,
+    },
+  );
+  const learning = analyzeJoinLearning();
+  return {
+    success: true,
+    recorded: { userId: hit.userId, displayName: hit.displayName, worldName: hit.worldName, rank },
+    learning,
+  };
+}
+
+async function handleGetJoinLearning() {
+  try {
+    const raw = storage.getConfig('join_learning');
+    const learning = raw ? JSON.parse(raw) : analyzeJoinLearning();
+    const count = storage._query('SELECT COUNT(*) AS c FROM join_choices')[0].c;
+    return { choicesCount: count, learning };
+  } catch (e) {
+    return { error: `读取失败: ${e.message}` };
+  }
+}
+
+async function handleRecommendJoin({ limit = 10, minScore = 0 } = {}) {
+  // 0. 权重来源：显式偏好(join_prefs) > 自动学习(join_learning) > 默认
+  let joinPrefs = { crowd: 'normal' };
+  try {
+    const rawPref = storage.getConfig('join_prefs');
+    if (rawPref) joinPrefs = { ...joinPrefs, ...JSON.parse(rawPref) };
+  } catch (e) { /* 偏好解析失败按默认 */ }
+  let learning = null;
+  if (!joinPrefs.crowd || joinPrefs.crowd === 'normal') {
+    try {
+      const rawLearn = storage.getConfig('join_learning');
+      if (rawLearn) { const l = JSON.parse(rawLearn); if (l && l.enabled) learning = l; }
+    } catch (e) { /* 学习结果解析失败按默认 */ }
+  }
+  const isExplicitPref = joinPrefs.crowd && joinPrefs.crowd !== 'normal';
+  const CROWD = joinPrefs.crowd || (learning && learning.crowd) || 'normal';
+  const famMult = isExplicitPref ? 1 : (learning ? learning.familiarityMult : 1);
+  const crowdMult = CROWD === 'avoid' ? 1.5 : (CROWD === 'love' ? 4 : 3);
+  const fullPenalty = CROWD === 'avoid' ? 80 : (CROWD === 'love' ? 20 : 40);
+  const coldPenalty = CROWD === 'avoid' ? 0 : (CROWD === 'love' ? 15 : 10);
+  const prefTag = CROWD === 'normal' ? '' : (isExplicitPref ? `偏好[${CROWD === 'avoid' ? '避人潮' : '爱热闹'}]` : `学习[${CROWD === 'avoid' ? '避人潮' : '爱热闹'}]`);
+
+  // 1. 全部在线好友
+  const onlineR = await rateLimiter.execute(() => api._request('GET', '/auth/user/friends?offline=false'));
+  if (onlineR.status !== 200) throw new Error(`API error: ${onlineR.status}`);
+  const onlineFriends = Array.isArray(onlineR.data) ? onlineR.data : [];
+
+  // 2. 收藏夹分组（熟悉度补充信号，权重可配置）
+  let groupWeights = {};
+  const contactGroups = new Set();
+  try {
+    if (process.env.VRC_MONITOR_GROUP_WEIGHTS) groupWeights = JSON.parse(process.env.VRC_MONITOR_GROUP_WEIGHTS);
+  } catch (e) {}
+  if (process.env.VRC_MONITOR_CONTACT_GROUPS) {
+    for (const g of process.env.VRC_MONITOR_CONTACT_GROUPS.split(',')) contactGroups.add(g.trim());
+  }
+  const groupMap = new Map();
+  try {
+    const groupsR = await rateLimiter.execute(() => api._request('GET', '/favorite/groups?type=friend&n=100'));
+    const favsR = await rateLimiter.execute(() => api._request('GET', '/favorites?type=friend&n=100'));
+    const groups = (groupsR.status === 200 && Array.isArray(groupsR.data)) ? groupsR.data : [];
+    const favs = (favsR.status === 200 && Array.isArray(favsR.data)) ? favsR.data : [];
+    for (const g of groups) {
+      const isContact = contactGroups.has(g.displayName || g.name);
+      const weight = groupWeights[g.displayName || g.name] !== undefined ? groupWeights[g.displayName || g.name] : (isContact ? -40 : 5);
+      const memberIds = new Set(favs.filter(f => (f.tags || [])[0] === g.name).map(f => f.favoriteId));
+      groupMap.set(g.displayName || g.name, { memberIds, weight, isContact });
+    }
+  } catch (e) { /* 收藏夹失败不阻断 */ }
+
+  // 3. 熟悉度：同屏统计（现成 storage.findCompanions，30天 + 一年各一次，缓存）
+  const SELF = api.currentUser?.id || (await api._request('GET', '/auth/user')).data?.id || '';
+  const NOW_MS = Date.now();
+  const DAY = 86400000;
+  const companionsCache = {};
+  async function getCompanionsMap(startMs, endMs) {
+    const key = `${startMs}|${endMs}`;
+    if (companionsCache[key]) return companionsCache[key];
+    const r = storage.findCompanions(SELF, new Date(startMs).toISOString(), new Date(endMs).toISOString());
+    const map = new Map((r.companions || []).map(c => [c.userId, c.matchCount || 0]));
+    companionsCache[key] = map;
+    return map;
+  }
+  async function familiarityScore(userId) {
+    const recentMap = await getCompanionsMap(NOW_MS - 30 * DAY, NOW_MS);
+    const histMap = await getCompanionsMap(NOW_MS - 365 * DAY, NOW_MS);
+    const recent = recentMap.get(userId) || 0;
+    const hist = histMap.get(userId) || 0;
+    const recentScore = Math.min(recent * 2, 60) + (recent > 0 ? 10 : 0);
+    const histScore = Math.min(hist * 0.5, 30) * 0.6;
+    return { score: Math.round(recentScore + histScore), recentMatchCount: recent, histMatchCount: hist };
+  }
+
+  // 4. 逐个好友：世界名 + 实例 + 熟悉度 + 综合评分
+  const worldCache = new Map();
+  const instanceInfo = new Map();
+  const sleepWorlds = new Set();
+  try {
+    const sw = storage._query ? storage._query('SELECT world_id FROM new_worlds WHERE sleep_ok=1') : [];
+    for (const r of sw) sleepWorlds.add(r.world_id);
+  } catch (e) {}
+
+  // 安静图判定：sleep_ok=1 或世界名命中安静关键词（人少更好，人多打扰）
+  const QUIET_RE = /(寝|眠|睡眠|睡觉|睡|sleep|quiet|静か|静寂|calm|relax|リラックス|ゆったり|安らぎ|癒し|冥想|meditation)/i;
+  const isQuietWorldName = (name) => typeof name === 'string' && QUIET_RE.test(name);
+
+  const detailed = [];
+  for (const f of onlineFriends) {
+    const loc = parseLocation(f.location || 'private');
+    if (!loc || loc.type === 'private' || loc.type === 'traveling' ||
+        f.location === 'private' || f.location === 'offline' || f.location === 'traveling') continue;
+
+    // 世界名
+    let worldName = f.worldId || loc.worldId || '';
+    if (loc.worldId) {
+      if (worldCache.has(loc.worldId)) worldName = worldCache.get(loc.worldId);
+      else {
+        const cached = storage.getWorldName(loc.worldId);
+        if (cached && cached.name) worldName = cached.name;
+        else {
+          const r = await rateLimiter.execute(() => api._request('GET', `/worlds/${loc.worldId}`));
+          if (r.status === 200 && r.data && r.data.name) {
+            worldName = r.data.name;
+            try { storage.upsertWorld({ worldId: loc.worldId, name: r.data.name, authorId: r.data.authorId || '', authorName: r.data.authorName || '' }); } catch (e) {}
+          }
+        }
+        worldCache.set(loc.worldId, worldName);
+      }
+    }
+
+    // 实例详情
+    let instanceUsers, instanceCapacity, fillRatio;
+    if (loc.instanceId && f.location && !f.location.includes('~private')) {
+      const instKey = f.location;
+      if (!instanceInfo.has(instKey)) {
+        try {
+          const r = await rateLimiter.execute(() => api._request('GET', `/instances/${instKey}`));
+          if (r.status === 200 && r.data) instanceInfo.set(instKey, { nUsers: r.data.n_users || 0, capacity: r.data.capacity || 0 });
+          else instanceInfo.set(instKey, null);
+        } catch (e) { instanceInfo.set(instKey, null); }
+      }
+      const inst = instanceInfo.get(instKey);
+      if (inst) {
+        instanceUsers = inst.nUsers;
+        instanceCapacity = inst.capacity;
+        fillRatio = inst.capacity > 0 ? +(inst.nUsers / inst.capacity).toFixed(2) : 0;
+      }
+    }
+
+    // 收藏夹分组
+    let groupName = null, groupWeight = 0, isContact = false;
+    for (const [gn, info] of groupMap) {
+      if (info.memberIds.has(f.id)) {
+        groupName = gn; groupWeight = info.weight; isContact = info.isContact;
+        break;
+      }
+    }
+
+    // 熟悉度
+    const fam = await familiarityScore(f.id);
+
+    // 综合评分
+    let score = 0;
+    const reasons = [];
+    if (isContact) { score -= 40; reasons.push('活动联系人-40'); }
+    else {
+      const famScore = famMult !== 1 ? Math.min(Math.round(fam.score * famMult), 100) : Math.min(fam.score, 100);
+      score += famScore;
+      reasons.push(`熟悉度${famScore}${famMult !== 1 ? `(学习加权×${famMult})` : ''}(30天${fam.recentMatchCount}次)`);
+      if (groupName) {
+        const bonus = Math.min(groupWeight, 10);
+        if (bonus !== 0) { score += bonus; reasons.push(`[${groupName}]+${bonus}`); }
+      }
+    }
+    const isSleepWorld = loc.worldId && sleepWorlds.has(loc.worldId);
+    const isQuietWorld = isSleepWorld || isQuietWorldName(worldName);
+    if (instanceUsers !== undefined) {
+      if (isQuietWorld) {
+        // 安静图：人少是理想状态，人多反而打扰（破坏氛围/电灯泡）
+        const quietBonus = learning && learning.quietBias ? 25 : 15;
+        if (instanceUsers === 0) { reasons.push(`安静图空房可进`); }
+        else if (instanceUsers <= 3) { score += quietBonus; reasons.push(`安静图${instanceUsers}人正合适+${quietBonus}`); }
+        else if (instanceUsers <= 6) { score += 0; reasons.push(`安静图${instanceUsers}人适中`); }
+        else { score -= 50; reasons.push(`安静图${instanceUsers}人太多-50`); }
+      } else {
+        // 热闹图：人多正向，黄金区最理想（人数权重/爆满/冷清受偏好调节）
+        if (instanceUsers < 3 && instanceUsers > 0) { score -= 15; reasons.push(`人少${instanceUsers}人可能私聊-15`); }
+        if (fillRatio >= 0.3 && fillRatio <= 0.8) { score += 50; reasons.push(`黄金区${Math.round(fillRatio*100)}%+50`); }
+        else if (fillRatio > 0.9) { score -= fullPenalty; reasons.push(`${prefTag}爆满-${fullPenalty}`); }
+        else if (fillRatio < 0.1) { score -= coldPenalty; reasons.push(`${prefTag}冷清-${coldPenalty}`); }
+        score += instanceUsers * crowdMult; reasons.push(`人数${instanceUsers}${CROWD === 'normal' ? '' : `×${crowdMult}`}`);
+      }
+    }
+    if (loc.type === 'public') { score += 20; reasons.push('public+20'); }
+    else if (loc.type === 'friends' || loc.type === 'hidden') { score += 10; reasons.push(loc.type === 'hidden' ? 'friend++10' : 'friends+10'); }
+    else if (loc.type === 'group') { score += 5; reasons.push('group+5'); }
+    if (f.status === 'active') { score += 10; reasons.push('active+10'); }
+
+    detailed.push({
+      userId: f.id,
+      displayName: f.displayName,
+      worldId: loc.worldId,
+      worldName,
+      instanceType: loc.type,
+      instanceTypeDisplay: loc.type === 'hidden' ? 'friend+' : loc.type,
+      instanceUsers, instanceCapacity, fillRatio,
+      region: loc.region || '',
+      status: f.status,
+      isSleepWorld,
+      isQuietWorld,
+      familiarity: fam,
+      relation: { group: groupName, isContact, note: isContact ? '活动联系人(非好友)' : (groupName ? `收藏夹[${groupName}]` : '普通好友') },
+      recommendScore: Math.round(score),
+      reasons,
+    });
+  }
+
+  detailed.sort((a, b) => (b.recommendScore || 0) - (a.recommendScore || 0));
+  const filtered = minScore > 0 ? detailed.filter(d => d.recommendScore >= minScore) : detailed;
+  // 存推荐快照（record_join_choice 用它补全选择上下文）
+  const baseline = computeListBaseline(filtered.slice(0, limit));
+  lastRecommendSnapshot = { at: Date.now(), top: filtered.slice(0, limit), baseline };
+  return {
+    totalOnline: onlineFriends.length,
+    joinable: detailed.length,
+    top: filtered.slice(0, limit),
+    method: 'familiarity+group+scene+instance',
+    preference: isExplicitPref ? { crowd: CROWD, label: joinPrefs.label || '' } : null,
+    learning: (!isExplicitPref && learning) ? { crowd: learning.crowd, familiarityMult: learning.familiarityMult, quietBias: learning.quietBias, samples: learning.samples } : null,
   };
 }
 
@@ -2159,6 +2867,24 @@ async function handleRpc(rpc, session, res) {
             break;
           case 'peek_group_announcement':
             result = await rateLimiter.execute(() => handlePeekGroupAnnouncement(args));
+            break;
+          case 'get_favorite_friends_locations':
+            result = await handleGetFavoriteFriendsLocations(args);
+            break;
+          case 'recommend_join':
+            result = await handleRecommendJoin(args);
+            break;
+          case 'set_join_preference':
+            result = await handleSetJoinPreference(args);
+            break;
+          case 'get_join_preference':
+            result = await handleGetJoinPreference();
+            break;
+          case 'record_join_choice':
+            result = await handleRecordJoinChoice(args);
+            break;
+          case 'get_join_learning':
+            result = await handleGetJoinLearning();
             break;
           default:
             throw new Error(`Unknown tool: ${name}`);
