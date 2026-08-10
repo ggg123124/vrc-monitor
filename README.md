@@ -1,4 +1,4 @@
-# VRChat 好友监控系统 (vrc-monitor)
+# VRChat 助手 (vrchat-assistant)
 
 > 自建 VRChat 好友动态监控系统 · 替代 VRCX-0
 > 技术栈：Node.js + SQLite + WebSocket + MCP + Hermes 插件
@@ -35,7 +35,7 @@
 - ✅ **历史数据迁移** — 从 VRCX-0 导入 10 个月的 33 万条活动记录
 - ✅ **世界名缓存** — 自动解析 `wrld_xxx` 为可读世界名（懒刷新：缓存命中直接用，`forceRefresh: true` 手动刷新防改名陈旧）
 - ✅ **关注名单** — 标记核心好友，活动时特别通知
-- ✅ **MCP 工具接口** — 54 个工具供 Hermes / 任意 MCP 客户端调用
+- ✅ **MCP 工具接口** — 55 个工具供 Hermes / 任意 MCP 客户端调用
 - ✅ **数据库自动备份** — 启动 + 每 24h 自动备份（WAL 在线备份，无需停机），保留最近 2 份到 `backups/`；`backup_database` 工具可随时手动触发
 - ✅ **Hermes 插件托管** — 会话自动拉起、崩溃自愈、`vrc_status` 等管理工具
 
@@ -169,7 +169,7 @@ cp desktop/plugin.js "$HERMES_HOME/desktop-plugins/vrc-monitor/"
 - **双路检测**：状态文件 pid 存活 **或** 端口探测成功，均可识别为运行中（防状态文件丢失误判）
 - **日志**：`$HERMES_HOME/workspace/vrc-monitor/monitor.log`
 
-## 🔌 MCP 工具（54 个）
+## 🔌 MCP 工具（55 个）
 
 服务监听 `http://127.0.0.1:8799/mcp`，通过 HTTP SSE 提供 MCP 协议。Hermes 用户可在 `$HERMES_HOME/config.yaml`（Windows 为 `%LOCALAPPDATA%\hermes\config.yaml`）配置：
 
@@ -252,7 +252,8 @@ mcp_servers:
 | `record_join_choice` | 记录一次推荐选择（自动补全上下文，≥5 次后自动学习权重） | `userId`/`displayName` | — |
 | `get_join_learning` | 查看选择学习状态与生效的权重调整 | — | — |
 | `create_instance` | **创建新房间**：worldId 必填；type（public/hidden/friends/private/group，默认 hidden）、region（us/eu/jp，默认 jp）可选；非 public 自动带 ownerId=当前用户（不带会 400 "Invalid owner ID"）；返回 `location` 可直接给 invite_myself | `worldId` | `type`、`region`、`instanceId`、`groupAccessType` |
-| `invite_myself` | **邀请自己传送进指定实例**：`location`（worldId:instanceId 完整串）或 `worldId`+`instanceId` 分开传；客户端收到 invite 通知后接受即传送 | `location` 或 `worldId`+`instanceId` | — |
+| `invite_myself` | **打开指定实例**（与 open_world 同一引擎，静默回退）：命名管道直发优先（Windows 游戏内静默弹加入菜单），管道不可用自动回退 API 自我邀请（客户端收到通知接受后传送）；`location`（worldId:instanceId 完整串）或 `worldId`+`instanceId` 分开传 | `location` 或 `worldId`+`instanceId` | `forceApi` |
+| `open_world` | **一键打开世界/实例**：`worldId`（自动建实例，type/region 可指定）或 `location`（完整实例串直接开）；命名管道直发（游戏内静默弹加入菜单，仅 Windows，1 步直达）失败自动回退 API 自我邀请 | `worldId` 或 `location` | `type`、`region`、`shortName`、`forceApi` |
 | `send_friend_request` | **发送好友请求**（添加好友）：`userId` 直接加，或 `displayName` 精确匹配（不区分大小写）后加 | `userId` 或 `displayName` 至少一个 | — |
 | `remove_friend` | **删除好友**（不可逆）：`userId` 或 `displayName` 精确匹配；**必须 `confirm: true` 才执行**，否则只返回目标信息预览 | `userId` 或 `displayName` 至少一个 | `confirm`（默认 false） |
 
@@ -289,10 +290,12 @@ mcp_servers:
 │   ├── ws-manager.js       # WebSocket 管理
 │   ├── event-pipeline.js   # 事件处理管道
 │   ├── friend-state.js     # 好友状态管理
-│   └── rate-limiter.js     # API 限流
+│   ├── rate-limiter.js     # API 限流
+│   └── vrchat-launch.js    # 打开实例统一入口（管道探测 + API 回退）
 ├── vrchat-api.js           # VRChat API 客户端
 ├── fetch-otp.py            # 邮箱 IMAP OTP 自动抓取
 ├── migrate-vrcx0.mjs       # VRCX-0 数据迁移脚本
+├── open-world.mjs          # 本机辅助：创建房间并在 VRChat 内打开（管道/API 双通道）
 ├── hermes-plugin/          # Hermes 托管插件
 │   ├── plugin.yaml
 │   ├── __init__.py
@@ -325,6 +328,23 @@ node migrate-vrcx0.mjs <VRCX数据库路径> <userId>
 ```
 
 > **注意**：userId 可在 VRChat 官网个人资料页查看，格式如 `usr_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`。脚本会自动去掉横线匹配 VRCX 数据库表名格式。
+
+## 🧰 辅助工具（本机可选）
+
+### `open-world.mjs` — 创建房间并在 VRChat 客户端内打开（探测式本机增强）
+
+创建一个新房间，并在**运行中的 VRChat 客户端**内打开指定世界（游戏内弹确认菜单，不会新开进程）：
+
+```bash
+node open-world.mjs wrld_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx   # 按世界 ID 开图
+node open-world.mjs "地图名字"                                   # 按名字搜索开图
+node open-world.mjs --instance <完整location>                    # 直接加入指定实例
+```
+
+- **原理**：核心逻辑在 `core/vrchat-launch.js`（统一入口 `openInstance`）：
+  1. **本机增强（仅 Windows）**：探测 VRChat 命名管道 `\\.\pipe\VRChatURLLaunchPipe`，存在则直发 `vrchat://launch` URL——已运行的客户端在游戏内**一步弹出加入菜单**（VRCX VRCIPC 同款协议，不新开进程）；
+  2. **跨平台回退**：管道探测失败（VRChat 未运行 / 非 Windows）**静默回退**为 API 邀请自己传送（`POST /invite/myself/to/{worldId}:{instanceId}`）——客户端收到邀请通知，接受后传送，功能不缺失。
+- **依赖**：仓库根目录 `credentials.json`（VRChat 登录凭据）；纯本机工具，不参与服务主流程，非 Windows 平台自动走 API 邀请。
 
 ## 🛠 故障排查
 

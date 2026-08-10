@@ -15,7 +15,7 @@ metadata:
 - 服务启动：项目目录下 `node start-monitor.js`（首次需配置 `credentials.json`，见 AGENTS.md）
 - 数据库：本地 SQLite（WebSocket 实时采集事件，含历史上线/位置/同屏记录）
 
-## MCP 工具（54 个）
+## MCP 工具（55 个）
 
 | 工具 | 说明 |
 |------|------|
@@ -52,7 +52,8 @@ metadata:
 | `send_invite` | 邀请好友加入你当前所在房间（拉人进房；userId/worldId/instanceId 必填、message 可选） |
 | `request_invite` | 请求好友邀请你加入 TA 的房间（userId 必填、message 可选，默认 "Can I join you?"） |
 | `create_instance` | **创建新实例（房间）**：worldId 必填、type（默认 hidden）/region（默认 jp）可选；⚠️ 非 public 必须带 ownerId=当前用户（否则 400 "Invalid owner ID"，2026-08-09 实测，官方文档没写）；返回 location 可直接给 invite_myself |
-| `invite_myself` | **邀请自己传送进指定实例**：location（worldId:instanceId）或 worldId+instanceId；POST /invite/myself/to/{worldId}:{instanceId}，客户端收到 invite 通知接受后传送 |
+| `invite_myself` | **打开指定实例**（与 open_world 同一引擎）：管道直发优先（Windows 游戏内静默弹菜单），失败静默回退 API 自我邀请（通知接受后传送）；location（worldId:instanceId）或 worldId+instanceId；forceApi 强制走 API |
+| `open_world` | **一键打开世界/实例**：worldId（自动建实例）或 location（完整实例串直接开）；core/vrchat-launch.js openInstance 统一入口——命名管道直发（游戏内静默弹加入菜单，Windows 1 步直达）失败静默回退 API 自我邀请；forceApi 强制走 API |
 | `send_friend_request` | 发送好友请求（添加好友；userId 直接加 或 displayName 精确匹配不区分大小写，二选一） |
 | `remove_friend` | 删除好友（不可逆！userId 或 displayName 精确匹配，必须传 confirm: true 才执行，否则只预览目标） |
 | `get_server_status` | 服务/认证状态 |

@@ -20,6 +20,7 @@ import { EventPipeline } from './core/event-pipeline.js';
 import { backupDatabase } from './core/backup.js';
 import { FriendStateManager } from './core/friend-state.js';
 import { isJunkWorld, worldScore, classifyWorlds, fetchFreshWorlds } from './core/new-worlds.js';
+import { openInstance } from './core/vrchat-launch.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = 8799;
@@ -332,13 +333,29 @@ const CUSTOM_TOOLS = [
   },
   {
     name: 'invite_myself',
-    description: '[write·vrchat] Send yourself an invite to an instance (client teleports on accept). Accepts location (worldId:instanceId) or worldId+instanceId separately.',
+    description: '[write·vrchat] Open an instance in the running VRChat client (same engine as open_world): named-pipe launch first (Windows, silent in-game join dialog), falls back to API self-invite (client teleports on accept) when pipe unavailable. Accepts location (worldId:instanceId) or worldId+instanceId separately.',
     inputSchema: {
       type: 'object',
       properties: {
         location: { type: 'string', description: 'Full location string, e.g. wrld_x:12345~hidden(usr_x)~region(jp). If provided, worldId/instanceId are ignored.' },
         worldId: { type: 'string', description: 'World id (wrld_...) — ignored if location is provided' },
         instanceId: { type: 'string', description: 'Instance id (full format with ~region etc.) — ignored if location is provided' },
+        forceApi: { type: 'boolean', description: 'Skip pipe detection and force API self-invite (remote/test scenarios)' },
+      },
+    },
+  },
+  {
+    name: 'open_world',
+    description: '[write·vrchat] Open a world/instance in the running VRChat client. If only worldId given, creates a new instance first (hidden jp default), then: named-pipe launch (VRChatURLLaunchPipe → silent in-game join dialog, Windows, 1 step) with API self-invite fallback (invite notification) when pipe unavailable. Core: core/vrchat-launch.js openInstance.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        worldId: { type: 'string', description: 'World id (wrld_...) — creates a new instance (type/region) then opens it' },
+        location: { type: 'string', description: 'Full instance location to open directly, e.g. wrld_x:12345~hidden(usr_x)~region(jp). If given, worldId/type/region are ignored.' },
+        type: { type: 'string', description: 'Instance type when creating from worldId: public/hidden/friends/private/group (default hidden)' },
+        region: { type: 'string', description: 'Region when creating from worldId: us/eu/jp (default jp)' },
+        shortName: { type: 'string', description: 'Optional room short name shown in the launch menu' },
+        forceApi: { type: 'boolean', description: 'Skip pipe detection and force API self-invite (remote/test scenarios)' },
       },
     },
   },
@@ -1669,28 +1686,59 @@ async function handleCreateInstance({ worldId, type, region, instanceId, groupAc
   };
 }
 
-async function handleInviteMyself({ location, worldId, instanceId }) {
-  let wId = worldId;
-  let iId = instanceId;
-  if (location && typeof location === 'string') {
-    const idx = location.indexOf(':');
+async function handleInviteMyself({ location, worldId, instanceId, forceApi }) {
+  // 统一入口（与 open_world 同一套）：管道直发优先（游戏内静默弹加入菜单），
+  // 管道不可用/非 Windows 时静默回退 API 自我邀请（客户端收到通知接受后传送）
+  let loc = location;
+  if (loc && typeof loc === 'string') {
+    const idx = loc.indexOf(':');
     if (idx <= 0) throw new Error('location 格式应为 worldId:instanceId（如 wrld_x:12345~hidden(usr_x)~region(jp)）');
-    wId = location.slice(0, idx);
-    iId = location.slice(idx + 1);
+    if (!String(loc).startsWith('wrld_')) throw new Error('location 必须是 wrld_ 开头的完整实例串');
+  } else {
+    if (!worldId || !String(worldId).startsWith('wrld_')) throw new Error('worldId 必须是 wrld_ 开头');
+    if (!instanceId) throw new Error('instanceId 不能为空（可用 create_instance 返回的 location）');
+    loc = `${worldId}:${instanceId}`;
   }
-  if (!wId || !String(wId).startsWith('wrld_')) throw new Error('worldId 必须是 wrld_ 开头');
-  if (!iId) throw new Error('instanceId 不能为空（可用 create_instance 返回的 location）');
-  const r = await api._request('POST', `/invite/myself/to/${wId}:${iId}`);
-  if (r.status >= 400) {
-    throw new Error(`邀请自己失败 API ${r.status}: ${JSON.stringify(r.data).slice(0, 200)}（404=实例无效或不是合法参与者）`);
-  }
-  const d = r.data || {};
+  const res = await openInstance({ location: loc, api, forceApi: !!forceApi });
+  if (!res.success) throw new Error(res.error || '邀请自己失败');
+  const wId = loc.slice(0, loc.indexOf(':'));
+  const iId = loc.slice(loc.indexOf(':') + 1);
   return {
     success: true,
+    method: res.method,
     worldId: wId,
     instanceId: iId,
-    notificationId: d.id || null,
-    notificationType: d.type || null,
+    notificationId: res.notificationId || null,
+    notificationType: null,
+    detail: res.detail || null,
+  };
+}
+
+async function handleOpenWorld({ worldId, location, type, region, shortName, forceApi }) {
+  // 1) 定位目标实例：直接给 location 就用它；只给 worldId 就先建实例（复用 handleCreateInstance）
+  let loc = location;
+  let sn = shortName || null;
+  if (!loc || typeof loc !== 'string') {
+    if (!worldId || !String(worldId).startsWith('wrld_')) {
+      throw new Error('需要 worldId（wrld_ 开头，自动建实例后打开）或 location（完整实例串直接打开）');
+    }
+    const inst = await handleCreateInstance({ worldId, type, region });
+    if (!inst.location) throw new Error('创建实例成功但未返回 location，无法打开');
+    loc = inst.location;
+    sn = sn || inst.shortName || null;
+  } else if (!String(loc).startsWith('wrld_')) {
+    throw new Error('location 必须是 wrld_ 开头的完整实例串（如 wrld_x:12345~hidden(usr_x)~region(jp)）');
+  }
+  // 2) 统一入口：管道直发（静默弹窗）→ 探测失败静默回退 API 自我邀请
+  const res = await openInstance({ location: loc, shortName: sn, api, forceApi: !!forceApi });
+  if (!res.success) throw new Error(res.error || '打开实例失败');
+  return {
+    success: true,
+    method: res.method,
+    location: loc,
+    shortName: sn,
+    notificationId: res.notificationId || null,
+    detail: res.detail || null,
   };
 }
 
@@ -2800,6 +2848,10 @@ async function handleRpc(rpc, session, res) {
           }
           case 'invite_myself': {
             result = await rateLimiter.execute(() => handleInviteMyself(args));
+            break;
+          }
+          case 'open_world': {
+            result = await rateLimiter.execute(() => handleOpenWorld(args));
             break;
           }
           case 'send_friend_request': {
