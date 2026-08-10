@@ -29,7 +29,8 @@ const DB_PATH = path.join(__dirname, 'vrc-monitor.sqlite3');
 const BACKUP_DIR = path.join(__dirname, 'backups');
 const BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000; // 每 24h 自动备份
 
-// ── .env 加载（只取 VRC_MONITOR_*，不覆盖进程已有环境变量）──
+// ── .env 加载（只取 VRC_MONITOR_*）──
+// 注意：无条件覆盖 process.env——服务被插件 spawn 时可能继承旧值，跳过会导致 .env 配置失效
 // 个人配置（分组权重/联系人名单等）放仓库根 .env（.gitignore 已忽略），不硬编码进代码
 try {
   const envFile = path.join(__dirname, '.env');

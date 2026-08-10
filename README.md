@@ -159,6 +159,8 @@ cp desktop/plugin.js "$HERMES_HOME/desktop-plugins/vrc-monitor/"
 | `VRC_MONITOR_DIR` | 自动探测（agent 在仓库目录内运行） | 服务目录（含 start-monitor.js），未探测到时需显式设置 |
 | `VRC_MONITOR_NODE` | PATH 中的 node | Node 可执行文件路径 |
 | `VRC_MONITOR_WS_PROXY` | `http://127.0.0.1:7892` | WebSocket 直连超时后的代理回退地址（可覆盖默认值） |
+| `VRC_MONITOR_GROUP_WEIGHTS` | 未配置（各分组 +5） | 收藏夹分组权重 JSON（如 {"join":20,"new":5}），recommend_join / get_favorite_friends_locations 评分用 |
+| `VRC_MONITOR_CONTACT_GROUPS` | 未配置（无联系人降权） | 活动联系人分组名（逗号分隔），命中分组内成员评分 -40 |
 
 ### 进程托管原理
 

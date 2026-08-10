@@ -32,6 +32,11 @@ export class Storage {
     if (!worldCols.some(c => c.name === 'note')) {
       this._run(`ALTER TABLE world_cache ADD COLUMN note TEXT`);
     }
+    // 迁移：旧库 new_worlds 缺 sleep_ok 列（recommend_join 睡觉图评分用，幂等）
+    const nwCols = this._query(`PRAGMA table_info(new_worlds)`);
+    if (!nwCols.some(c => c.name === 'sleep_ok')) {
+      this._run(`ALTER TABLE new_worlds ADD COLUMN sleep_ok INTEGER DEFAULT 0`);
+    }
     return this;
   }
 
