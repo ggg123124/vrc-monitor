@@ -1498,6 +1498,8 @@ async function handleGetJoinLearning() {
     // 旧缓存可能缺 preferredCrowdRange/worldType 字段——缺则重新分析
     const cached = raw ? JSON.parse(raw) : null;
     const learning = (cached && 'preferredCrowdRange' in cached && 'worldType' in cached) ? cached : analyzeJoinLearning();
+    const count = storage._query('SELECT COUNT(*) AS c FROM join_choices')[0].c;
+    return { choicesCount: count, learning };
   } catch (e) {
     return { error: `读取失败: ${e.message}` };
   }
