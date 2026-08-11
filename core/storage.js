@@ -37,6 +37,11 @@ export class Storage {
     if (!nwCols.some(c => c.name === 'sleep_ok')) {
       this._run(`ALTER TABLE new_worlds ADD COLUMN sleep_ok INTEGER DEFAULT 0`);
     }
+    // 迁移：旧库 join_choices 缺 world_tags 列（类型偏好学习用，幂等）
+    const jcCols = this._query(`PRAGMA table_info(join_choices)`);
+    if (!jcCols.some(c => c.name === 'world_tags')) {
+      this._run(`ALTER TABLE join_choices ADD COLUMN world_tags TEXT DEFAULT ''`);
+    }
     return this;
   }
 

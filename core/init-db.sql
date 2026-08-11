@@ -111,9 +111,12 @@ CREATE TABLE IF NOT EXISTS new_worlds (
   popularity INTEGER DEFAULT 0,
   visited INTEGER DEFAULT 0,     -- 用户是否逛过（1=逛过）
   visited_at TEXT,               -- 逛过的时间（若已逛）
-  sleep_ok INTEGER DEFAULT 0        -- 适合睡觉/放松标记（推荐评分与「开个睡觉图」用）
+  tags TEXT DEFAULT '',          -- 作者标签 JSON 数组（author_tag_*，主题分类用）
+  description TEXT DEFAULT '',   -- 世界描述（主题关键词匹配用）
+  source TEXT DEFAULT 'new'      -- 来源: new=新发布-推荐 / hot=热门图追加
 );
 CREATE INDEX IF NOT EXISTS idx_new_worlds_visited ON new_worlds(visited);
+
 
 -- 推荐选择学习（recommend_join 用户选择记录，个性化权重学习的数据源）
 -- 每次用户从推荐列表选择某人/某图记录一条快照，含当时列表基线用于对比分析
@@ -135,5 +138,7 @@ CREATE TABLE IF NOT EXISTS join_choices (
   list_count INTEGER DEFAULT 0,     -- 当时列表长度
   list_avg_users REAL DEFAULT 0,    -- 当时列表平均人数（基线）
   list_avg_fill REAL DEFAULT 0,     -- 当时列表平均填充率（基线）
-  list_quiet_ratio REAL DEFAULT 0   -- 当时列表安静图占比（基线，0-1）
+  list_quiet_ratio REAL DEFAULT 0,  -- 当时列表安静图占比（基线，0-1）
+  world_tags TEXT DEFAULT ''        -- 被选世界的 author_tag_* 标签 JSON 数组（类型偏好学习用）
 );
+CREATE INDEX IF NOT EXISTS idx_join_choices_created ON join_choices(created_at);
