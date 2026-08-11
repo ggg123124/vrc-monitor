@@ -47,8 +47,8 @@
   # Agent 通过 GitHub 工具完成 fork，然后：
   git clone https://github.com/<用户名>/vrchat-assistant.git
   cd vrchat-assistant
-  # upstream 指向原仓库（fork 来源），可从 GitHub fork 页面获取原作者用户名
-  git remote add upstream https://github.com/<原作者GitHub用户名>/vrchat-assistant.git
+  # upstream 指向原仓库（fork 来源）
+  git remote add upstream https://github.com/ggg123124/vrchat-assistant.git
   ```
   之后 Agent 实现的新功能可直接 `git push origin` 保存到用户的 Fork；需要同步官方更新时执行 `git pull upstream main`。
 
@@ -109,6 +109,8 @@ hermes plugins enable vrc-monitor
 ```
 
 插件提供 `vrc_status` / `vrc_start` / `vrc_stop` / `vrc_restart` 工具，并在每次 Hermes 会话开始时自动拉起服务（on_session_start 钩子）。
+
+> **平台限制**：插件当前仅支持 Windows（`plugin.yaml` 中 `platforms: [windows]`）。macOS / Linux 用户需手动执行 `node start-monitor.js` 启动服务，或等待插件跨平台支持。Node.js 服务本身是跨平台的，仅 Hermes 插件托管层有此限制。
 
 > 注意：`dashboard/` 子目录（manifest.json + plugin_api.py）是桌面插件和 `hermes dashboard` 的后端 API，复制时**不能遗漏**，否则桌面端「配置」功能不可用。
 >

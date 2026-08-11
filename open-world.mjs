@@ -18,13 +18,14 @@
  *      （POST /invite/myself/to/{worldId}:{instanceId}，客户端收到邀请通知）
  *
  * 注意：管道增强仅 Windows；API 邀请回退全平台可用。
+ *       主题词功能已移除（原依赖 world-themes.mjs，该文件已不在仓库中）。
  */
 import { VrchatApiClient } from './vrchat-api.js';
 import { openInstance } from './core/vrchat-launch.js';
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execSync, execFileSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { RateLimiter } from './core/rate-limiter.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -43,13 +44,12 @@ async function fetchOtp() {
   return execFileSync('python', args, { timeout: 15000, encoding: 'utf-8' }).trim();
 }
 
-// ── 解析参数：worldId / 地图名 / 主题词（开个XX的图）/ --instance ──
+// ── 解析参数：worldId / 地图名 / --instance ──
 const INSTANCE_MODE = process.argv.includes('--instance');
 let target = process.argv[2];
 if (!target) {
-  console.error('用法: node open-world.mjs <worldId 或 地图名 或 主题词>');
+  console.error('用法: node open-world.mjs <worldId 或 地图名>');
   console.error('      node open-world.mjs --instance <完整location>  # 加入指定实例');
-  console.error('主题词: 夏天 海 雪 恐怖 太空 森林自然 游戏 音乐 社交 放松 夜晚星空');
   process.exit(1);
 }
 // 模式定位：--instance 后面跟的值
@@ -59,31 +59,6 @@ if (INSTANCE_MODE) {
   if (!target) {
     console.error('❌ --instance 缺少参数');
     process.exit(1);
-  }
-}
-
-// 主题词识别：如果参数是主题（或其关键词），用 world-themes.mjs 随机抽一个未逛的
-const THEME_HINTS = ['夏天', '夏', '海', '雪', '恐怖', '太空', '宇宙', '森林', '自然',
-  '游戏', '音乐', '社交', '放松', '夜晚', '星空', '月', 'summer', 'beach', 'snow',
-  'horror', 'space', 'forest', 'game', 'music', 'chill', 'relax', 'night', 'moon'];
-const isThemeHint = THEME_HINTS.some(h => target.includes(h));
-if (isThemeHint && !/^wrld_/.test(target)) {
-  // 主题词解析依赖 world-themes.mjs（可选增强：本仓库存在才启用，否则按地图名处理）
-  if (!existsSync(path.join(__dirname, 'world-themes.mjs'))) {
-    console.error('[theme] world-themes.mjs 不存在，跳过主题解析（按地图名处理）');
-  } else {
-    try {
-      const out = execSync(`node world-themes.mjs "${target}" --random`, {
-        cwd: __dirname, timeout: 15000, encoding: 'utf-8',
-      });
-      const pick = JSON.parse(out.slice(out.indexOf('{')));
-      if (pick.world?.id) {
-        target = pick.world.id;
-        console.error(`[theme] ${pick.emoji} 主题「${pick.theme}」随机抽中: ${pick.world.name} (${pick.world.id})`);
-      }
-    } catch (e) {
-      console.error(`[theme] 主题解析失败（按地图名处理）: ${e.message}`);
-    }
   }
 }
 

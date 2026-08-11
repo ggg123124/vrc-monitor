@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS group_cache (
   updated_at TEXT DEFAULT (datetime('now'))
 );
 
--- 新地图追踪（new-worlds-tracker.mjs 维护：新发布世界的收藏/逛过标记）
+-- 新地图追踪（scan_new_worlds MCP 工具维护：新发布世界的收藏/逛过标记）
 CREATE TABLE IF NOT EXISTS new_worlds (
   world_id TEXT PRIMARY KEY,
   world_name TEXT NOT NULL DEFAULT '',
