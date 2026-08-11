@@ -18,7 +18,8 @@
 2. **是否需要将 VRCX 中的历史数据导入到本系统？**
    - 导入内容包括：好友列表与信任等级、好友备注/昵称、世界缓存、位置变更历史、上下线记录、Avatar 变更、状态/Bio 变更等（详见下表）。
    - 导入是**可选**的——不导入也能正常使用本服务，只是查询历史活动记录时没有迁移前的旧数据。
-   - 若用户**需要导入**，在完成「配置步骤」1-3（服务能正常启动）后，运行 `node migrate-vrcx0.mjs` 即可导入数据（脚本会自动探测 VRCX 数据库路径和 userId）。
+   - 若用户**需要导入**，在完成「配置步骤」1-3（服务能正常启动）后，**先停止服务**，再运行 `node migrate-vrcx0.mjs` 导入数据（脚本会自动探测 VRCX 数据库路径和 userId）。
+   - **⚠️ 迁移必须先在服务停止状态下执行**（`vrc_stop` 或结束 node 进程）：迁移脚本用 sql.js 整体重写数据库文件，服务运行中执行会使旧 WAL 与新主文件不匹配 → `SQLITE_CORRUPT`，表现为服务查不到历史数据、重启即崩溃（2026-08-12 实测踩坑）。脚本已内置 127.0.0.1:8799 端口检测，服务运行时直接拒绝执行（可用 `--force` 跳过，风险自负）。迁移完成后自动清理残留 `-wal`/`-shm` 文件，再 `node start-monitor.js` 启动服务。
    - 若用户**不需要导入**，直接进入「配置步骤」。
 
 | 迁移项 | VRCX 数据表 | 说明 |
@@ -170,7 +171,7 @@ cp -r skills/vrc-monitor-companion-query "$HERMES_HOME/skills/"
 | 查看服务状态 | Hermes 工具 `vrc_status` 或桌面插件面板 |
 | 配置账号 | 桌面插件「配置」弹窗，或编辑 `credentials.json` |
 | 重启服务 | Hermes 工具 `vrc_restart` |
-| 迁移 VRCX 数据 | `node migrate-vrcx0.mjs` |
+| 迁移 VRCX 数据 | **先 `vrc_stop` 停止服务**，再 `node migrate-vrcx0.mjs`（运行中迁移会损坏数据库，脚本自带检测会拒绝）；完成后 `node start-monitor.js` |
 
 ## 常见问题
 

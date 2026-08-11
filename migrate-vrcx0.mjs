@@ -6,24 +6,72 @@
  * 使用:
  *   自动模式:  node migrate-vrcx0.mjs                                   （自动探测数据库路径 + userId）
  *   手动模式:  node migrate-vrcx0.mjs <VRCX数据库路径> <userId>
+ *   自定义目标: node migrate-vrcx0.mjs --db <目标数据库路径>             （默认: ./vrc-monitor.sqlite3）
+ *   跳过检测:  node migrate-vrcx0.mjs --force                            （服务运行时强制迁移，风险自负）
+ * 
+ * ⚠️ 重要：迁移脚本会整体重写数据库文件，执行前必须先停止监控服务！
+ *    服务运行中迁移会导致旧 WAL 与新主文件不匹配 → SQLITE_CORRUPT（服务查不到历史数据/无法启动）。
+ *    脚本会自动检测 127.0.0.1:8799 端口，检测到服务在运行会拒绝执行。
  * 
  * 迁移内容: 事件流（位置/上下线/Avatar/状态/Bio）、好友列表、世界缓存、备注
  */
 import initSqlJs from 'sql.js';
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import net from 'node:net';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import os from 'node:os';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const MONITOR_DB = path.join(__dirname, 'vrc-monitor.sqlite3');
+// ── 命令行参数解析（支持任意顺序）──
+//   node migrate-vrcx0.mjs [VRCX数据库路径] [userId] [--db 目标库] [--force]
+function parseArgs(argv) {
+  const args = { force: false, db: null, positional: [] };
+  for (let i = 2; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--force') args.force = true;
+    else if (a === '--db') args.db = argv[++i];
+    else args.positional.push(a);
+  }
+  return args;
+}
+
+// ── 检测监控服务是否在运行（探测 8799 端口）──
+// 服务持有数据库的 WAL 连接，迁移整文件重写会破坏它 → SQLITE_CORRUPT
+async function isServiceRunning(port = 8799, timeoutMs = 800) {
+  return new Promise(resolve => {
+    const socket = net.connect({ host: '127.0.0.1', port }, () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.on('error', () => { socket.destroy(); resolve(false); });
+    socket.setTimeout(timeoutMs, () => { socket.destroy(); resolve(false); });
+  });
+}
+
+// ── 清理不再匹配的 WAL/SHM 残留 ──
+// sql.js 重写主文件后，旧 -wal/-shm 与新主文件 salt 不匹配，SQLite 会报 SQLITE_CORRUPT。
+// 服务已停止时这些文件只可能是旧残留（迁移前已警告），可安全移除。
+function cleanupStaleWal(dbPath) {
+  for (const suffix of ['-wal', '-shm']) {
+    const p = dbPath + suffix;
+    if (existsSync(p)) {
+      rmSync(p);
+      log(`   🧹 已清理不匹配的残留文件: ${path.basename(p)}`);
+    }
+  }
+}
+
+// ── 目标数据库路径（--db 可覆盖，默认项目根 vrc-monitor.sqlite3）──
+const _args0 = parseArgs(process.argv);
+const MONITOR_DB = _args0.db ? path.resolve(_args0.db) : path.join(__dirname, 'vrc-monitor.sqlite3');
 const DDL_PATH = path.join(__dirname, 'core', 'init-db.sql');
 
 // ── 数据库路径解析（优先级：命令行参数 > 新版默认 > 旧版兜底）──
-function resolve_vrcx0_db(argv) {
+function resolve_vrcx0_db(positional) {
   // 1. 命令行显式指定
-  if (argv[2]) return argv[2];
+  if (positional[0]) return positional[0];
 
   // 2. 新版 VRCX 默认路径
   const newPath = path.join(os.homedir(), 'AppData', 'Roaming', 'VRCX', 'VRCX.sqlite3');
@@ -42,9 +90,9 @@ function resolve_vrcx0_db(argv) {
 }
 
 // ── 用户前缀解析（优先级：命令行参数 > 自动探测）──
-function resolve_user_prefix(argv, vrcx0db) {
+function resolve_user_prefix(positional, vrcx0db) {
   // 1. 命令行显式指定（去掉横线兼容 usr_xxx-xxx 格式）
-  if (argv[3]) return argv[3].replace(/-/g, '');
+  if (positional[1]) return positional[1].replace(/-/g, '');
 
   // 2. 自动探测：查询 _feed_gps 表名提取前缀
   try {
@@ -94,11 +142,45 @@ function worldIdFromLocation(location) {
 
 // ── 主函数 ──
 async function main() {
-  const VRCX0_DB = resolve_vrcx0_db(process.argv);
+  const args = parseArgs(process.argv);
+  const VRCX0_DB = resolve_vrcx0_db(args.positional);
 
   console.log('══════════════════════════════════════════════');
   console.log('  VRCX 数据迁移工具');
   console.log('══════════════════════════════════════════════\n');
+
+  // ═══════════════════════════════════════════
+  // 0. 服务运行检测（防止 SQLITE_CORRUPT）
+  // ═══════════════════════════════════════════
+  log('🔍 检测监控服务状态 (127.0.0.1:8799)...');
+  const serviceRunning = await isServiceRunning();
+  if (serviceRunning && !args.force) {
+    console.log('\n❌ 检测到监控服务正在运行！');
+    console.log('   迁移脚本会整体重写数据库文件（sql.js 整文件写出），');
+    console.log('   服务运行中执行会导致旧 WAL 与新主文件不匹配 → SQLITE_CORRUPT，');
+    console.log('   表现为：历史数据对服务不可见、服务重启即崩溃。');
+    console.log('');
+    console.log('   请先停止服务后再迁移：');
+    console.log('     • Hermes: 调用 vrc_stop 工具');
+    console.log('     • 手动:   结束 node 进程（taskkill /F /PID <pid>）');
+    console.log('   迁移完成后再启动服务: node start-monitor.js');
+    console.log('');
+    console.log('   如确认数据库当前无服务占用（例如端口被无关程序占用），');
+    console.log('   可加 --force 跳过检测强制迁移（风险自负）。');
+    process.exit(1);
+  }
+  if (serviceRunning) {
+    log('⚠️  服务在运行，但已指定 --force，继续执行（风险自负）');
+  } else {
+    log('✅ 服务未运行，可以安全迁移');
+  }
+
+  // 迁移前检查：残留 WAL 警告（上次服务可能未正常关闭，WAL 内增量事件不会迁移）
+  if (existsSync(MONITOR_DB + '-wal')) {
+    log('⚠️  检测到目标库存在 -wal 残留文件（上次服务可能非正常退出）');
+    log('   WAL 中未合并的实时事件将不会被迁移（只迁移主文件内容），');
+    log('   建议先正常启动一次服务再停止（触发 checkpoint 合并），或接受少量增量丢失。');
+  }
 
   // 1. 打开数据库
   log(`📂 打开数据库: ${VRCX0_DB}`);
@@ -109,7 +191,7 @@ async function main() {
 
   const SQL = await initSqlJs();
   const vrcx0 = new SQL.Database(readFileSync(VRCX0_DB));
-  const USER_PREFIX = resolve_user_prefix(process.argv, vrcx0);
+  const USER_PREFIX = resolve_user_prefix(args.positional, vrcx0);
 
   // 初始化新数据库（如果已存在则加载）
   let monitorDb;
@@ -547,6 +629,9 @@ async function main() {
   const finalData = monitorDb.export();
   writeFileSync(MONITOR_DB, Buffer.from(finalData));
   monitorDb.close();
+
+  // 清理不再匹配的 WAL/SHM 残留（sql.js 重写后旧残留会导致 SQLITE_CORRUPT）
+  cleanupStaleWal(MONITOR_DB);
 
   // 验证
   log('\n══════════════════════════════════════════════');
