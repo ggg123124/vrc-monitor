@@ -42,6 +42,17 @@ export class Storage {
     if (!jcCols.some(c => c.name === 'world_tags')) {
       this._run(`ALTER TABLE join_choices ADD COLUMN world_tags TEXT DEFAULT ''`);
     }
+    // 迁移：旧库 new_worlds 缺 tags/description/source 列（scan_new_worlds upsert 依赖，幂等）
+    const nwCols2 = this._query(`PRAGMA table_info(new_worlds)`);
+    if (!nwCols2.some(c => c.name === 'tags')) {
+      this._run(`ALTER TABLE new_worlds ADD COLUMN tags TEXT DEFAULT ''`);
+    }
+    if (!nwCols2.some(c => c.name === 'description')) {
+      this._run(`ALTER TABLE new_worlds ADD COLUMN description TEXT DEFAULT ''`);
+    }
+    if (!nwCols2.some(c => c.name === 'source')) {
+      this._run(`ALTER TABLE new_worlds ADD COLUMN source TEXT DEFAULT 'new'`);
+    }
     return this;
   }
 
