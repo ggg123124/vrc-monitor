@@ -14,7 +14,6 @@
   "dependencies": {
     "better-sqlite3": "^12.2.0",
     "https-proxy-agent": "^9.1.0",
-    "sql.js": "^1.14.1",
     "ws": "^8.21.1"
   }
 }

@@ -1,22 +1,23 @@
 /**
  * VRChat 好友监控系统 — 数据迁移脚本
- * 
+ *
  * 从 VRCX SQLite 数据库导入历史数据到新系统
- * 
+ *
  * 使用:
  *   自动模式:  node migrate-vrcx0.mjs                                   （自动探测数据库路径 + userId）
  *   手动模式:  node migrate-vrcx0.mjs <VRCX数据库路径> <userId>
  *   自定义目标: node migrate-vrcx0.mjs --db <目标数据库路径>             （默认: ./vrc-monitor.sqlite3）
  *   跳过检测:  node migrate-vrcx0.mjs --force                            （服务运行时强制迁移，风险自负）
- * 
- * ⚠️ 重要：迁移脚本会整体重写数据库文件，执行前必须先停止监控服务！
- *    服务运行中迁移会导致旧 WAL 与新主文件不匹配 → SQLITE_CORRUPT（服务查不到历史数据/无法启动）。
- *    脚本会自动检测 127.0.0.1:8799 端口，检测到服务在运行会拒绝执行。
- * 
+ *
+ * ⚠️ 引擎说明：v1.1.0 起改用 better-sqlite3（流式迁移 + 事务提交），
+ *    不再整文件重写数据库（旧版 sql.js 的 export() 全量写出是 SQLITE_CORRUPT 根因）。
+ *    better-sqlite3 与主服务 storage.js 同引擎（WAL 模式），运行中迁移不再损坏库，
+ *    服务运行检测保留为警告级。
+ *
  * 迁移内容: 事件流（位置/上下线/Avatar/状态/Bio）、好友列表、世界缓存、备注
  */
-import initSqlJs from 'sql.js';
-import { readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import Database from 'better-sqlite3';
+import { existsSync, rmSync } from 'node:fs';
 import net from 'node:net';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
@@ -38,7 +39,7 @@ function parseArgs(argv) {
 }
 
 // ── 检测监控服务是否在运行（探测 8799 端口）──
-// 服务持有数据库的 WAL 连接，迁移整文件重写会破坏它 → SQLITE_CORRUPT
+// better-sqlite3 WAL 模式下服务运行中迁移已安全，此检测降级为警告
 async function isServiceRunning(port = 8799, timeoutMs = 800) {
   return new Promise(resolve => {
     const socket = net.connect({ host: '127.0.0.1', port }, () => {
@@ -51,8 +52,8 @@ async function isServiceRunning(port = 8799, timeoutMs = 800) {
 }
 
 // ── 清理不再匹配的 WAL/SHM 残留 ──
-// sql.js 重写主文件后，旧 -wal/-shm 与新主文件 salt 不匹配，SQLite 会报 SQLITE_CORRUPT。
-// 服务已停止时这些文件只可能是旧残留（迁移前已警告），可安全移除。
+// 仅历史遗留（旧版 sql.js 整文件重写产生的）需要清理；better-sqlite3 自身不会制造不匹配残留。
+// 服务运行中绝不清理（会删掉活动连接正在用的 WAL 文件）。
 function cleanupStaleWal(dbPath) {
   for (const suffix of ['-wal', '-shm']) {
     const p = dbPath + suffix;
@@ -90,16 +91,17 @@ function resolve_vrcx0_db(positional) {
 }
 
 // ── 用户前缀解析（优先级：命令行参数 > 自动探测）──
-function resolve_user_prefix(positional, vrcx0db) {
+function resolve_user_prefix(positional, vrcx0) {
   // 1. 命令行显式指定（去掉横线兼容 usr_xxx-xxx 格式）
   if (positional[1]) return positional[1].replace(/-/g, '');
 
   // 2. 自动探测：查询 _feed_gps 表名提取前缀
   try {
-    const result = vrcx0db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%_feed_gps'");
-    if (result.length > 0 && result[0].values.length > 0) {
-      const tableName = result[0].values[0][0];
-      return tableName.replace(/_feed_gps$/, '');
+    const row = vrcx0.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%_feed_gps' LIMIT 1"
+    ).get();
+    if (row && row.name) {
+      return row.name.replace(/_feed_gps$/, '');
     }
   } catch (_) {
     // 探测失败继续走下面的错误提示
@@ -121,9 +123,7 @@ const stats = {
   feed_bio: 0,
   memos: 0,
   friend_log_current: 0,
-  friend_log_history: 0,
   cache_world: 0,
-  cache_avatar: 0,
   notifications: 0,
   skipped_gps_no_world: 0,
 };
@@ -140,46 +140,45 @@ function worldIdFromLocation(location) {
   return idx > 0 ? location.slice(0, idx) : '';
 }
 
+// ── 事务化分批写入（better-sqlite3）──
+// 每个批次一个事务提交；大表分批避免单事务过大。中断时已提交批次保留，不会留下半成品。
+function insertInBatches(db, rows, batchSize, insertFn) {
+  let inserted = 0;
+  for (let i = 0; i < rows.length; i += batchSize) {
+    const chunk = rows.slice(i, i + batchSize);
+    const tx = db.transaction(() => {
+      for (const row of chunk) insertFn(row);
+    });
+    tx();
+    inserted += chunk.length;
+  }
+  return inserted;
+}
+
 // ── 主函数 ──
 async function main() {
   const args = parseArgs(process.argv);
   const VRCX0_DB = resolve_vrcx0_db(args.positional);
 
   console.log('══════════════════════════════════════════════');
-  console.log('  VRCX 数据迁移工具');
+  console.log('  VRCX 数据迁移工具 (better-sqlite3 引擎)');
   console.log('══════════════════════════════════════════════\n');
 
   // ═══════════════════════════════════════════
-  // 0. 服务运行检测（防止 SQLITE_CORRUPT）
+  // 0. 服务运行检测（警告级，不再阻断）
   // ═══════════════════════════════════════════
   log('🔍 检测监控服务状态 (127.0.0.1:8799)...');
   const serviceRunning = await isServiceRunning();
-  if (serviceRunning && !args.force) {
-    console.log('\n❌ 检测到监控服务正在运行！');
-    console.log('   迁移脚本会整体重写数据库文件（sql.js 整文件写出），');
-    console.log('   服务运行中执行会导致旧 WAL 与新主文件不匹配 → SQLITE_CORRUPT，');
-    console.log('   表现为：历史数据对服务不可见、服务重启即崩溃。');
-    console.log('');
-    console.log('   请先停止服务后再迁移：');
-    console.log('     • Hermes: 调用 vrc_stop 工具');
-    console.log('     • 手动:   结束 node 进程（taskkill /F /PID <pid>）');
-    console.log('   迁移完成后再启动服务: node start-monitor.js');
-    console.log('');
-    console.log('   如确认数据库当前无服务占用（例如端口被无关程序占用），');
-    console.log('   可加 --force 跳过检测强制迁移（风险自负）。');
-    process.exit(1);
-  }
   if (serviceRunning) {
-    log('⚠️  服务在运行，但已指定 --force，继续执行（风险自负）');
+    log('⚠️  监控服务正在运行。better-sqlite3 WAL 模式下运行中迁移安全，');
+    log('   但为避免与服务的实时写入交错，仍建议迁移前停止服务。');
+    if (!args.force) {
+      log('   如需继续，请加 --force 确认（风险自负）。');
+      process.exit(1);
+    }
+    log('   --force 已指定，继续执行');
   } else {
-    log('✅ 服务未运行，可以安全迁移');
-  }
-
-  // 迁移前检查：残留 WAL 警告（上次服务可能未正常关闭，WAL 内增量事件不会迁移）
-  if (existsSync(MONITOR_DB + '-wal')) {
-    log('⚠️  检测到目标库存在 -wal 残留文件（上次服务可能非正常退出）');
-    log('   WAL 中未合并的实时事件将不会被迁移（只迁移主文件内容），');
-    log('   建议先正常启动一次服务再停止（触发 checkpoint 合并），或接受少量增量丢失。');
+    log('✅ 服务未运行');
   }
 
   // 1. 打开数据库
@@ -189,22 +188,22 @@ async function main() {
     process.exit(1);
   }
 
-  const SQL = await initSqlJs();
-  const vrcx0 = new SQL.Database(readFileSync(VRCX0_DB));
+  // 源库只读打开（better-sqlite3 原生连接，流式读取）
+  const vrcx0 = new Database(VRCX0_DB, { readonly: true, fileMustExist: true });
   const USER_PREFIX = resolve_user_prefix(args.positional, vrcx0);
 
-  // 初始化新数据库（如果已存在则加载）
-  let monitorDb;
-  if (existsSync(MONITOR_DB)) {
-    monitorDb = new SQL.Database(readFileSync(MONITOR_DB));
-    log(`   ✅ 加载已有新数据库`);
+  // 目标库读写打开（不存在则创建）；复用主服务同款引擎与 pragma
+  const monitorDb = new Database(MONITOR_DB);
+  monitorDb.pragma('journal_mode = WAL');
+  monitorDb.pragma('busy_timeout = 5000');
+  if (monitorDb.prepare("SELECT count(*) AS c FROM sqlite_master WHERE type='table' AND name='events'").get().c === 0) {
+    const { readFileSync } = await import('node:fs');
+    const ddl = readFileSync(DDL_PATH, 'utf-8');
+    monitorDb.exec(ddl);
+    log('   ✅ 初始化表结构完成（新库）');
   } else {
-    monitorDb = new SQL.Database();
-    log(`   ✅ 创建新数据库`);
+    log('   ✅ 加载已有数据库');
   }
-  const ddl = readFileSync(DDL_PATH, 'utf-8');
-  monitorDb.run(ddl);
-  log(`   ✅ 初始化表结构完成`);
 
   // ═══════════════════════════════════════════
   // 2. cache_world → world_cache
@@ -212,21 +211,8 @@ async function main() {
   log('\n📦 迁移世界缓存...');
   let count = 0;
   try {
-    const rows = vrcx0.exec(`SELECT * FROM cache_world`);
+    const rows = vrcx0.prepare(`SELECT * FROM cache_world`).all();
     if (rows.length > 0) {
-      const worlds = rows[0].values.map(v => ({
-        worldId: v[0],
-        name: v[7] || '',                    // 第8列才是 name
-        authorId: v[2] || '',
-        authorName: v[3] || '',
-        description: v[5] || '',
-        imageUrl: v[6] || '',
-        releaseStatus: v[8] || '',
-        capacity: 0,
-        favorites: 0,
-        tags: [],
-      }));
-      
       const stmt = monitorDb.prepare(
         `INSERT OR REPLACE INTO world_cache
          (world_id, name, author_id, author_name, description, image_url,
@@ -234,24 +220,25 @@ async function main() {
          VALUES ($worldId, $name, $authorId, $authorName, $description, $imageUrl,
           $releaseStatus, $capacity, $favorites, $tags, datetime('now'))`
       );
-      for (const w of worlds) {
-        stmt.bind({
-          $worldId: w.worldId,
-          $name: w.name,
-          $authorId: w.authorId,
-          $authorName: w.authorName,
-          $description: w.description,
-          $imageUrl: w.imageUrl,
-          $releaseStatus: w.releaseStatus,
-          $capacity: w.capacity || 0,
-          $favorites: w.favorites || 0,
-          $tags: '[]',
-        });
-        stmt.step();
-        stmt.reset();
-        count++;
-      }
-      stmt.free();
+      const tx = monitorDb.transaction((items) => {
+        for (const w of items) {
+          stmt.run({
+            worldId: w.id,
+            name: w.name || '',
+            authorId: w.author_id || '',
+            authorName: w.author_name || '',
+            description: w.description || '',
+            imageUrl: w.image_url || '',
+            releaseStatus: w.release_status || '',
+            capacity: 0,
+            favorites: 0,
+            tags: '[]',
+          });
+        }
+      });
+      // 世界缓存一般不大，单事务提交
+      tx(rows);
+      count = rows.length;
       stats.cache_world = count;
     }
   } catch (err) {
@@ -265,50 +252,43 @@ async function main() {
   log('\n📝 迁移好友备注...');
   count = 0;
   try {
-    const rows = vrcx0.exec(`SELECT * FROM memos`);
+    const rows = vrcx0.prepare(`SELECT * FROM memos`).all();
     if (rows.length > 0) {
-      let batchCount = 0;
-      for (const row of rows[0].values) {
-        const userId = row[0];
-        const editedAt = row[1] || '';
-        const memoText = row[2] || '';
-        
-        // 从备注文本提取昵称（格式："昵称：风风" 或直接文本）
-        let displayName = '';
-        let nickName = memoText;
-        const nickMatch = memoText.match(/^昵称[：:]\s*(.+)/);
-        if (nickMatch) {
-          displayName = '';
-          nickName = nickMatch[1].trim();
-        }
+      const selectExisting = monitorDb.prepare(`SELECT user_id FROM friends WHERE user_id = ?`);
+      const updateMemo = monitorDb.prepare(
+        `UPDATE friends SET memo = $memo, updated_at = datetime('now')
+         WHERE user_id = $userId`
+      );
+      const insertFriend = monitorDb.prepare(
+        `INSERT INTO friends (user_id, display_name, memo, created_at, updated_at)
+         VALUES ($userId, $displayName, $memo, datetime('now'), datetime('now'))`
+      );
+      const tx = monitorDb.transaction((items) => {
+        for (const row of items) {
+          const userId = row.user_id;
+          const memoText = row.memo || '';
 
-        // 如果好友还不存在则插入，否则更新 memo
-        const existing = monitorDb.exec(
-          `SELECT user_id FROM friends WHERE user_id = '${userId.replace(/'/g, "''")}'`
-        );
-        if (existing.length > 0 && existing[0].values.length > 0) {
-          monitorDb.run(
-            `UPDATE friends SET memo = $memo, updated_at = datetime('now')
-             WHERE user_id = $userId`,
-            { $memo: nickName, $userId: userId }
-          );
-        } else {
-          monitorDb.run(
-            `INSERT INTO friends (user_id, display_name, memo, created_at, updated_at)
-             VALUES ($userId, $displayName, $memo, datetime('now'), datetime('now'))`,
-            { $userId: userId, $displayName: displayName || userId, $memo: nickName }
-          );
+          // 从备注文本提取昵称（格式："昵称：风风" 或直接文本）
+          let displayName = '';
+          let nickName = memoText;
+          const nickMatch = memoText.match(/^昵称[：:]\s*(.+)/);
+          if (nickMatch) {
+            displayName = '';
+            nickName = nickMatch[1].trim();
+          }
+
+          // 如果好友还不存在则插入，否则更新 memo
+          const existing = selectExisting.get(userId);
+          if (existing) {
+            updateMemo.run({ memo: nickName, userId });
+          } else {
+            insertFriend.run({ userId, displayName: displayName || userId, memo: nickName });
+          }
         }
-        count++;
-        batchCount++;
-        if (batchCount % 10 === 0) {
-          const data = monitorDb.export();
-          writeFileSync(MONITOR_DB, Buffer.from(data));
-        }
-      }
+      });
+      tx(rows);
+      count = rows.length;
       stats.memos = count;
-      const data = monitorDb.export();
-      writeFileSync(MONITOR_DB, Buffer.from(data));
     }
   } catch (err) {
     log(`   ⚠️ memos: ${err.message}`);
@@ -321,36 +301,35 @@ async function main() {
   log('\n👥 迁移好友列表...');
   count = 0;
   try {
-    const rows = vrcx0.exec(`SELECT * FROM ${USER_PREFIX}_friend_log_current`);
+    const rows = vrcx0.prepare(`SELECT * FROM ${USER_PREFIX}_friend_log_current`).all();
     if (rows.length > 0) {
-      for (const row of rows[0].values) {
-        const userId = row[0];
-        const displayName = row[1] || '';
-        const trustLevel = row[2] || '';
-        const friendNumber = row[3] || 0;
+      const selectExisting = monitorDb.prepare(`SELECT user_id FROM friends WHERE user_id = ?`);
+      const updateFriend = monitorDb.prepare(
+        `UPDATE friends SET display_name = $displayName, trust_level = $trustLevel,
+         updated_at = datetime('now') WHERE user_id = $userId`
+      );
+      const insertFriend = monitorDb.prepare(
+        `INSERT INTO friends (user_id, display_name, trust_level, created_at, updated_at)
+         VALUES ($userId, $displayName, $trustLevel, datetime('now'), datetime('now'))`
+      );
+      const tx = monitorDb.transaction((items) => {
+        for (const row of items) {
+          const userId = row.user_id;
+          const displayName = row.display_name || '';
+          const trustLevel = row.trust_level || '';
 
-        // 如果已存在（来自 memos 迁移），更新 display_name 和 trust_level
-        const existing = monitorDb.exec(
-          `SELECT user_id FROM friends WHERE user_id = '${userId.replace(/'/g, "''")}'`
-        );
-        if (existing.length > 0 && existing[0].values.length > 0) {
-          monitorDb.run(
-            `UPDATE friends SET display_name = $displayName, trust_level = $trustLevel,
-             updated_at = datetime('now') WHERE user_id = $userId`,
-            { $displayName: displayName, $trustLevel: trustLevel, $userId: userId }
-          );
-        } else {
-          monitorDb.run(
-            `INSERT INTO friends (user_id, display_name, trust_level, created_at, updated_at)
-             VALUES ($userId, $displayName, $trustLevel, datetime('now'), datetime('now'))`,
-            { $userId: userId, $displayName: displayName || userId, $trustLevel: trustLevel }
-          );
+          // 如果已存在（来自 memos 迁移），更新 display_name 和 trust_level
+          const existing = selectExisting.get(userId);
+          if (existing) {
+            updateFriend.run({ displayName, trustLevel, userId });
+          } else {
+            insertFriend.run({ userId, displayName: displayName || userId, trustLevel });
+          }
         }
-        count++;
-      }
+      });
+      tx(rows);
+      count = rows.length;
       stats.friend_log_current = count;
-      const data = monitorDb.export();
-      writeFileSync(MONITOR_DB, Buffer.from(data));
     }
   } catch (err) {
     log(`   ⚠️ friend_log_current: ${err.message}`);
@@ -363,53 +342,40 @@ async function main() {
   log('\n📍 迁移位置变更历史 (feed_gps)...');
   count = 0;
   const BATCH_SIZE = 10000;
-  let batch = [];
-  let skipped = 0;
-
   try {
-    const rows = vrcx0.exec(
+    const rows = vrcx0.prepare(
       `SELECT id, created_at, user_id, display_name, location, world_name, previous_location, time, group_name
        FROM ${USER_PREFIX}_feed_gps ORDER BY created_at ASC`
-    );
+    ).all();
     if (rows.length > 0) {
-      for (const row of rows[0].values) {
-        const location = row[4] || '';
-        const worldName = row[5] || '';
+      const stmt = monitorDb.prepare(
+        `INSERT INTO events (type, user_id, display_name, content_json, world_id, world_name, created_at, source)
+         VALUES ($type, $userId, $displayName, $contentJson, $worldId, $worldName, $createdAt, $source)`
+      );
+      const insertFn = (row) => {
+        const location = row.location || '';
+        const worldName = row.world_name || '';
         const worldId = worldIdFromLocation(location);
-
-        batch.push({
+        stmt.run({
           type: 'friend-location',
-          userId: row[2] || '',
-          displayName: row[3] || '',
-          contentJson: {
-            userId: row[2] || '',
-            displayName: row[3] || '',
+          userId: row.user_id || '',
+          displayName: row.display_name || '',
+          contentJson: JSON.stringify({
+            userId: row.user_id || '',
+            displayName: row.display_name || '',
             location,
             worldName,
-            previousLocation: row[6] || '',
-            time: row[7] || 0,
-          },
+            previousLocation: row.previous_location || '',
+            time: row.time || 0,
+          }),
           worldId,
           worldName,
-          createdAt: row[1] || '',
+          createdAt: row.created_at || '',
+          source: 'migrate',
         });
-        count++;
-
-        if (batch.length >= BATCH_SIZE) {
-          insertBatch(monitorDb, batch);
-          log(`   → ${count} 条...`);
-          batch = [];
-          const data = monitorDb.export();
-          writeFileSync(MONITOR_DB, Buffer.from(data));
-        }
-      }
-      // 最后一批
-      if (batch.length > 0) {
-        insertBatch(monitorDb, batch);
-      }
+      };
+      count = insertInBatches(monitorDb, rows, BATCH_SIZE, insertFn);
       stats.feed_gps = count;
-      const data = monitorDb.export();
-      writeFileSync(MONITOR_DB, Buffer.from(data));
     }
   } catch (err) {
     log(`   ⚠️ feed_gps: ${err.message}`);
@@ -421,49 +387,41 @@ async function main() {
   // ═══════════════════════════════════════════
   log('\n🔄 迁移上下线记录 (feed_online_offline)...');
   count = 0;
-  batch = [];
   try {
-    const rows = vrcx0.exec(
+    const rows = vrcx0.prepare(
       `SELECT id, created_at, user_id, display_name, type, location, world_name, time, group_name
        FROM ${USER_PREFIX}_feed_online_offline ORDER BY created_at ASC`
-    );
+    ).all();
     if (rows.length > 0) {
-      for (const row of rows[0].values) {
-        const eventType = row[4] === 'Online' ? 'friend-online' : 'friend-offline';
-        const location = row[5] || '';
-        const worldName = row[6] || '';
+      const stmt = monitorDb.prepare(
+        `INSERT INTO events (type, user_id, display_name, content_json, world_id, world_name, created_at, source)
+         VALUES ($type, $userId, $displayName, $contentJson, $worldId, $worldName, $createdAt, $source)`
+      );
+      const insertFn = (row) => {
+        const eventType = row.type === 'Online' ? 'friend-online' : 'friend-offline';
+        const location = row.location || '';
+        const worldName = row.world_name || '';
         const worldId = worldIdFromLocation(location);
-
-        batch.push({
+        stmt.run({
           type: eventType,
-          userId: row[2] || '',
-          displayName: row[3] || '',
-          contentJson: {
-            userId: row[2] || '',
-            displayName: row[3] || '',
-            type: row[4],
+          userId: row.user_id || '',
+          displayName: row.display_name || '',
+          contentJson: JSON.stringify({
+            userId: row.user_id || '',
+            displayName: row.display_name || '',
+            type: row.type,
             location,
             worldName,
-            time: row[7] || 0,
-          },
+            time: row.time || 0,
+          }),
           worldId,
           worldName,
-          createdAt: row[1] || '',
+          createdAt: row.created_at || '',
+          source: 'migrate',
         });
-        count++;
-
-        if (batch.length >= BATCH_SIZE) {
-          insertBatch(monitorDb, batch);
-          log(`   → ${count} 条...`);
-          batch = [];
-          const data = monitorDb.export();
-          writeFileSync(MONITOR_DB, Buffer.from(data));
-        }
-      }
-      if (batch.length > 0) insertBatch(monitorDb, batch);
+      };
+      count = insertInBatches(monitorDb, rows, BATCH_SIZE, insertFn);
       stats.feed_online_offline = count;
-      const data = monitorDb.export();
-      writeFileSync(MONITOR_DB, Buffer.from(data));
     }
   } catch (err) {
     log(`   ⚠️ feed_online_offline: ${err.message}`);
@@ -475,48 +433,41 @@ async function main() {
   // ═══════════════════════════════════════════
   log('\n🎭 迁移 Avatar 变更记录 (feed_avatar)...');
   count = 0;
-  batch = [];
   try {
-    const rows = vrcx0.exec(
+    const rows = vrcx0.prepare(
       `SELECT id, created_at, user_id, display_name, owner_id, avatar_name,
               current_avatar_image_url, current_avatar_thumbnail_image_url,
               previous_current_avatar_image_url, previous_current_avatar_thumbnail_image_url
        FROM ${USER_PREFIX}_feed_avatar ORDER BY created_at ASC`
-    );
+    ).all();
     if (rows.length > 0) {
-      for (const row of rows[0].values) {
-        batch.push({
+      const stmt = monitorDb.prepare(
+        `INSERT INTO events (type, user_id, display_name, content_json, world_id, world_name, created_at, source)
+         VALUES ($type, $userId, $displayName, $contentJson, $worldId, $worldName, $createdAt, $source)`
+      );
+      const insertFn = (row) => {
+        stmt.run({
           type: 'friend-update',
-          userId: row[2] || '',
-          displayName: row[3] || '',
-          contentJson: {
-            userId: row[2] || '',
-            displayName: row[3] || '',
+          userId: row.user_id || '',
+          displayName: row.display_name || '',
+          contentJson: JSON.stringify({
+            userId: row.user_id || '',
+            displayName: row.display_name || '',
             type: 'avatar',
-            avatarName: row[5] || '',
-            avatarImageUrl: row[6] || '',
-            avatarThumbnailUrl: row[7] || '',
-            previousAvatarImageUrl: row[8] || '',
-            previousAvatarThumbnailUrl: row[9] || '',
-          },
+            avatarName: row.avatar_name || '',
+            avatarImageUrl: row.current_avatar_image_url || '',
+            avatarThumbnailUrl: row.current_avatar_thumbnail_image_url || '',
+            previousAvatarImageUrl: row.previous_current_avatar_image_url || '',
+            previousAvatarThumbnailUrl: row.previous_current_avatar_thumbnail_image_url || '',
+          }),
           worldId: '',
           worldName: '',
-          createdAt: row[1] || '',
+          createdAt: row.created_at || '',
+          source: 'migrate',
         });
-        count++;
-
-        if (batch.length >= BATCH_SIZE) {
-          insertBatch(monitorDb, batch);
-          log(`   → ${count} 条...`);
-          batch = [];
-          const data = monitorDb.export();
-          writeFileSync(MONITOR_DB, Buffer.from(data));
-        }
-      }
-      if (batch.length > 0) insertBatch(monitorDb, batch);
+      };
+      count = insertInBatches(monitorDb, rows, BATCH_SIZE, insertFn);
       stats.feed_avatar = count;
-      const data = monitorDb.export();
-      writeFileSync(MONITOR_DB, Buffer.from(data));
     }
   } catch (err) {
     log(`   ⚠️ feed_avatar: ${err.message}`);
@@ -528,46 +479,39 @@ async function main() {
   // ═══════════════════════════════════════════
   log('\n📊 迁移状态变更记录 (feed_status)...');
   count = 0;
-  batch = [];
   try {
-    const rows = vrcx0.exec(
+    const rows = vrcx0.prepare(
       `SELECT id, created_at, user_id, display_name, status, status_description,
               previous_status, previous_status_description
        FROM ${USER_PREFIX}_feed_status ORDER BY created_at ASC`
-    );
+    ).all();
     if (rows.length > 0) {
-      for (const row of rows[0].values) {
-        batch.push({
+      const stmt = monitorDb.prepare(
+        `INSERT INTO events (type, user_id, display_name, content_json, world_id, world_name, created_at, source)
+         VALUES ($type, $userId, $displayName, $contentJson, $worldId, $worldName, $createdAt, $source)`
+      );
+      const insertFn = (row) => {
+        stmt.run({
           type: 'friend-update',
-          userId: row[2] || '',
-          displayName: row[3] || '',
-          contentJson: {
-            userId: row[2] || '',
-            displayName: row[3] || '',
+          userId: row.user_id || '',
+          displayName: row.display_name || '',
+          contentJson: JSON.stringify({
+            userId: row.user_id || '',
+            displayName: row.display_name || '',
             type: 'status',
-            status: row[4] || '',
-            statusDescription: row[5] || '',
-            previousStatus: row[6] || '',
-            previousStatusDescription: row[7] || '',
-          },
+            status: row.status || '',
+            statusDescription: row.status_description || '',
+            previousStatus: row.previous_status || '',
+            previousStatusDescription: row.previous_status_description || '',
+          }),
           worldId: '',
           worldName: '',
-          createdAt: row[1] || '',
+          createdAt: row.created_at || '',
+          source: 'migrate',
         });
-        count++;
-
-        if (batch.length >= BATCH_SIZE) {
-          insertBatch(monitorDb, batch);
-          log(`   → ${count} 条...`);
-          batch = [];
-          const data = monitorDb.export();
-          writeFileSync(MONITOR_DB, Buffer.from(data));
-        }
-      }
-      if (batch.length > 0) insertBatch(monitorDb, batch);
+      };
+      count = insertInBatches(monitorDb, rows, BATCH_SIZE, insertFn);
       stats.feed_status = count;
-      const data = monitorDb.export();
-      writeFileSync(MONITOR_DB, Buffer.from(data));
     }
   } catch (err) {
     log(`   ⚠️ feed_status: ${err.message}`);
@@ -579,43 +523,36 @@ async function main() {
   // ═══════════════════════════════════════════
   log('\n📝 迁移 Bio 变更记录 (feed_bio)...');
   count = 0;
-  batch = [];
   try {
-    const rows = vrcx0.exec(
+    const rows = vrcx0.prepare(
       `SELECT id, created_at, user_id, display_name, bio, previous_bio
        FROM ${USER_PREFIX}_feed_bio ORDER BY created_at ASC`
-    );
+    ).all();
     if (rows.length > 0) {
-      for (const row of rows[0].values) {
-        batch.push({
+      const stmt = monitorDb.prepare(
+        `INSERT INTO events (type, user_id, display_name, content_json, world_id, world_name, created_at, source)
+         VALUES ($type, $userId, $displayName, $contentJson, $worldId, $worldName, $createdAt, $source)`
+      );
+      const insertFn = (row) => {
+        stmt.run({
           type: 'friend-update',
-          userId: row[2] || '',
-          displayName: row[3] || '',
-          contentJson: {
-            userId: row[2] || '',
-            displayName: row[3] || '',
+          userId: row.user_id || '',
+          displayName: row.display_name || '',
+          contentJson: JSON.stringify({
+            userId: row.user_id || '',
+            displayName: row.display_name || '',
             type: 'bio',
-            bio: row[4] || '',
-            previousBio: row[5] || '',
-          },
+            bio: row.bio || '',
+            previousBio: row.previous_bio || '',
+          }),
           worldId: '',
           worldName: '',
-          createdAt: row[1] || '',
+          createdAt: row.created_at || '',
+          source: 'migrate',
         });
-        count++;
-
-        if (batch.length >= BATCH_SIZE) {
-          insertBatch(monitorDb, batch);
-          log(`   → ${count} 条...`);
-          batch = [];
-          const data = monitorDb.export();
-          writeFileSync(MONITOR_DB, Buffer.from(data));
-        }
-      }
-      if (batch.length > 0) insertBatch(monitorDb, batch);
+      };
+      count = insertInBatches(monitorDb, rows, BATCH_SIZE, insertFn);
       stats.feed_bio = count;
-      const data = monitorDb.export();
-      writeFileSync(MONITOR_DB, Buffer.from(data));
     }
   } catch (err) {
     log(`   ⚠️ feed_bio: ${err.message}`);
@@ -625,38 +562,41 @@ async function main() {
   // ═══════════════════════════════════════════
   // 10. 关闭数据库并输出报告
   // ═══════════════════════════════════════════
+  // better-sqlite3 正常 close() 即触发 WAL checkpoint 合并，无需 export()/writeFileSync
+  monitorDb.pragma('wal_checkpoint(TRUNCATE)');
   vrcx0.close();
-  const finalData = monitorDb.export();
-  writeFileSync(MONITOR_DB, Buffer.from(finalData));
   monitorDb.close();
 
-  // 清理不再匹配的 WAL/SHM 残留（sql.js 重写后旧残留会导致 SQLITE_CORRUPT）
-  cleanupStaleWal(MONITOR_DB);
+  // 服务未运行时清理历史遗留的 WAL/SHM 残留（better-sqlite3 迁移后正常不会产生）
+  if (!serviceRunning) {
+    cleanupStaleWal(MONITOR_DB);
+  }
 
   // 验证
   log('\n══════════════════════════════════════════════');
   log('  迁移完成！验证结果：');
   log('══════════════════════════════════════════════\n');
 
-  // 用 sql.js 重新打开数据库来统计
-  const verifyDb = new SQL.Database(readFileSync(MONITOR_DB));
-  for (const table of ['events', 'friends', 'world_cache']) {
-    const r = verifyDb.exec(`SELECT COUNT(*) as c FROM ${table}`);
-    const c = r[0]?.values[0]?.[0] || 0;
-    log(`  ${table.padEnd(20)} : ${c.toLocaleString()} 行`);
-  }
+  const verifyDb = new Database(MONITOR_DB, { readonly: true });
+  try {
+    const integrity = verifyDb.pragma('integrity_check', { simple: true });
+    log(`  PRAGMA integrity_check  : ${integrity}`);
 
-  log('\n  各类事件分布:');
-  const types = verifyDb.exec(
-    `SELECT type, COUNT(*) as count FROM events GROUP BY type ORDER BY count DESC`
-  );
-  if (types.length > 0) {
-    for (const row of types[0].values) {
-      log(`  ${String(row[0]).padEnd(25)} : ${Number(row[1]).toLocaleString()}`);
+    for (const table of ['events', 'friends', 'world_cache']) {
+      const { c } = verifyDb.prepare(`SELECT COUNT(*) as c FROM ${table}`).get();
+      log(`  ${table.padEnd(20)} : ${Number(c).toLocaleString()} 行`);
     }
-  }
 
-  verifyDb.close();
+    log('\n  各类事件分布:');
+    const types = verifyDb.prepare(
+      `SELECT type, COUNT(*) as count FROM events GROUP BY type ORDER BY count DESC`
+    ).all();
+    for (const row of types) {
+      log(`  ${String(row.type).padEnd(25)} : ${Number(row.count).toLocaleString()}`);
+    }
+  } finally {
+    verifyDb.close();
+  }
 
   log('\n  备注迁移:');
   log(`  memos（好友昵称）            : ${stats.memos} 条`);
@@ -665,29 +605,6 @@ async function main() {
   log('\n✅ 数据迁移完成！');
   log(`   新数据库: ${MONITOR_DB}`);
   log(`   重启服务后即可使用: node start-monitor.js`);
-}
-
-function insertBatch(db, events) {
-  if (events.length === 0) return;
-  const stmt = db.prepare(
-    `INSERT INTO events (type, user_id, display_name, content_json, world_id, world_name, created_at, source)
-     VALUES ($type, $userId, $displayName, $contentJson, $worldId, $worldName, $createdAt, $source)`
-  );
-  for (const e of events) {
-    stmt.bind({
-      $type: e.type,
-      $userId: e.userId,
-      $displayName: e.displayName || '',
-      $contentJson: JSON.stringify(e.contentJson),
-      $worldId: e.worldId || '',
-      $worldName: e.worldName || '',
-      $createdAt: e.createdAt,
-      $source: 'migrate',
-    });
-    stmt.step();
-    stmt.reset();
-  }
-  stmt.free();
 }
 
 // 仅作为主入口运行时执行（防止被 import 时意外触发迁移）
