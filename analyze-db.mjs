@@ -2,25 +2,17 @@
  * VRCX-0 数据库结构分析 v2
  * 用法: node analyze-db.mjs [VRCX数据库路径]
  * 默认路径按平台自动探测（Windows VRCX-0 默认安装位置）
+ * 引擎: better-sqlite3（只读打开，与 migrate-vrcx0.mjs 同步迁移，移除 sql.js）
  */
-import initSqlJs from 'sql.js';
-import { readFileSync } from 'node:fs';
+import Database from 'better-sqlite3';
 
 const DB_PATH = process.argv[2] || 'C:/Users/<用户名>/AppData/Roaming/VRCX-0/VRCX-0.sqlite3';
 
-function query(db, sql) {
-  const result = db.exec(sql);
-  if (result.length === 0) return { columns: [], values: [] };
-  return result[0];
-}
-
 async function main() {
-  const SQL = await initSqlJs();
-  const buffer = readFileSync(DB_PATH);
-  const db = new SQL.Database(buffer);
+  const db = new Database(DB_PATH, { readonly: true, fileMustExist: true });
 
-  const tables = query(db, "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name");
-  const tableNames = tables.values.map(v => v[0]);
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all();
+  const tableNames = tables.map(r => r.name);
 
   console.log('══════════════════════════════════════════════');
   console.log('  VRCX-0 数据库结构分析');
@@ -49,8 +41,8 @@ async function main() {
 
   for (const prefix of prefixes) {
     const prefixTables = tableNames.filter(n => n.startsWith(prefix + '_'));
-    const countResult = query(db, `SELECT COUNT(*) FROM "${prefixTables[0]}"`);
-    const hasData = countResult.values.length > 0 && countResult.values[0][0] > 0;
+    const countRow = db.prepare(`SELECT COUNT(*) AS c FROM "${prefixTables[0]}"`).get();
+    const hasData = countRow.c > 0;
     console.log(`  ▸ ${prefix}  (${prefixTables.length} 张表, ${hasData ? '有数据' : '空'})`);
     if (hasData) {
       for (const name of prefixTables) {
@@ -61,11 +53,9 @@ async function main() {
 
   // 数据量统计
   console.log('\n━ 数据量统计 ｜━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-  const allNames = tableNames;
-  for (const name of allNames) {
+  for (const name of tableNames) {
     try {
-      const count = query(db, `SELECT COUNT(*) FROM "${name}"`);
-      const c = count.values[0][0];
+      const { c } = db.prepare(`SELECT COUNT(*) AS c FROM "${name}"`).get();
       if (c > 0) {
         console.log(`  ${name.padEnd(50)} : ${c} 行`);
       }
@@ -78,8 +68,8 @@ async function main() {
 function printTableInfo(db, name) {
   let cols, rows;
   try {
-    cols = query(db, `PRAGMA table_info("${name}")`);
-    rows = query(db, `SELECT * FROM "${name}" LIMIT 2`);
+    cols = db.prepare(`PRAGMA table_info("${name}")`).all();
+    rows = db.prepare(`SELECT * FROM "${name}" LIMIT 2`).all();
   } catch (e) {
     console.log(`  ┌─ ${name}`);
     console.log(`  │  (error: ${e.message})`);
@@ -87,12 +77,11 @@ function printTableInfo(db, name) {
     return;
   }
 
-  const colDefs = cols.values.map(v => {
-    const [, colName, colType, notNull, defaultVal, pk] = v;
+  const colDefs = cols.map(c => {
     const flags = [];
-    if (pk) flags.push('PK');
-    if (notNull) flags.push('NN');
-    return { colName, colType, flags, defaultVal };
+    if (c.pk) flags.push('PK');
+    if (c.notnull) flags.push('NN');
+    return { colName: c.name, colType: c.type, flags, defaultVal: c.dflt_value };
   });
 
   console.log(`  ┌─ ${name}  (${colDefs.length} 字段)`);
@@ -107,21 +96,20 @@ function printTableInfo(db, name) {
   console.log(colLines.join('\n'));
 
   // 示例
-  if (rows.values.length > 0) {
+  if (rows.length > 0) {
     console.log('  │  ── 示例数据 ──');
-    for (const row of rows.values) {
-      const pairs = rows.columns.map((col, i) => {
-        let val = row[i];
+    for (const row of rows) {
+      const pairs = Object.entries(row).map(([col, val]) => {
         if (val === null || val === undefined) return `${col}=null`;
-        val = String(val);
-        if (val.length > 80) val = val.slice(0, 80) + '…';
+        let s = String(val);
+        if (s.length > 80) s = s.slice(0, 80) + '…';
         // 如果是JSON对象，格式化
-        if (val.startsWith('{') || val.startsWith('[')) {
+        if (s.startsWith('{') || s.startsWith('[')) {
           try {
-            val = JSON.stringify(JSON.parse(val)).slice(0, 80) + '…';
+            s = JSON.stringify(JSON.parse(s)).slice(0, 80) + '…';
           } catch {}
         }
-        return `${col}=${val}`;
+        return `${col}=${s}`;
       }).join(', ');
       console.log(`  │  > ${pairs}`);
     }
