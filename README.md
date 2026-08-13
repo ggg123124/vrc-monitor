@@ -94,6 +94,16 @@ curl http://127.0.0.1:8799/health
 
 返回 `Auth: true`、`WS: connected`、在线好友数。
 
+## 🛡 常驻服务（开机自启 + 崩溃自愈）
+
+服务默认手动启动；如需**开机自动启动、崩溃自动修复、每日修复报告**（Windows），仓库自带一键脚本：
+
+```bat
+service-windows\setup-windows.cmd
+```
+
+详见 [service-windows/README.md](./service-windows/README.md)。数据库 / 备份目录可通过 `VRC_MONITOR_DB_PATH` / `VRC_MONITOR_BACKUP_DIR` 环境变量迁移到任意位置（写入仓库根 `.env` 即可，服务启动时自动加载）。
+
 ## 📦 Agent Skill 安装（开箱即用）
 
 仓库 `skills/` 目录自带 2 份**面向 AI Agent 的 skill 文档**（已隐去所有敏感信息，任何用户可直接使用）。安装后，Agent 无需 curl 手写 JSON-RPC，直接掌握查询工作流、正确工具选择和常见陷阱：

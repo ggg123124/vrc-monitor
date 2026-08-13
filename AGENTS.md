@@ -81,6 +81,9 @@
 
 - `VRC_MONITOR_DIR`：指向本仓库目录（克隆后服务所在目录）。若 agent 在仓库目录内运行，服务可自动探测，无需手动设置。
 - `VRC_MONITOR_NODE`：指向 Node.js 可执行文件路径。若不设置，自动从 PATH 查找 `node`。
+- `VRC_MONITOR_DB_PATH`：SQLite 数据库文件路径（默认 `<仓库>/vrc-monitor.sqlite3`）。可将数据库迁移到任意位置（如独立数据盘），配合常驻服务使用。
+- `VRC_MONITOR_BACKUP_DIR`：自动备份目录（默认 `<仓库>/backups`）。
+- `VRC_MONITOR_LOG_DIR`：常驻服务脚本的日志 / 修复记录目录（默认 `<仓库>/service-logs`，仅 `service-windows/` 脚本使用）。
 
 ### 3. 启动服务
 
@@ -172,6 +175,7 @@ cp -r skills/vrc-monitor-companion-query "$HERMES_HOME/skills/"
 | 查看服务状态 | Hermes 工具 `vrc_status` 或桌面插件面板 |
 | 配置账号 | 桌面插件「配置」弹窗，或编辑 `credentials.json` |
 | 重启服务 | Hermes 工具 `vrc_restart` |
+| 常驻服务（开机自启 + 崩溃自愈 + 每日修复报告） | `service-windows\setup-windows.cmd`（Windows；详见 `service-windows/README.md`） |
 | 迁移 VRCX 数据 | `node migrate-vrcx0.mjs`（better-sqlite3 引擎，运行中迁移安全但仍建议先停服务；检测到服务运行会要求 `--force`；**可重复执行**——v1.2.0 起幂等，自动跳过已迁移记录，旧数据需 `--force` 重插，见 PR #14）；完成后 `node start-monitor.js` |
 
 ## 发现漏洞 / 缺陷时（Agent 义务）
