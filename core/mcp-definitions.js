@@ -515,6 +515,19 @@ export const CUSTOM_TOOLS = [
     },
   },
   {
+    name: 'get_group_heat',
+    description: '[query·热度] Group activity heat: rank groups by how much your friends/you were in their group rooms (activityCount, friendCount, worldCount, trendPct vs previous equal window) + day-of-week×hour Beijing-time heatmap for top groups. Data from local event history (supports grp_/gmem_ ids).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        days: { type: 'number', default: 7, description: 'Analyze last N days (Beijing natural days, default 7, max 30)' },
+        startTime: { type: 'string', description: 'ISO 8601 start (optional, overrides days)' },
+        endTime: { type: 'string', description: 'ISO 8601 end (optional, must pair with startTime)' },
+        topK: { type: 'number', default: 5, description: 'Number of top groups to include a heatmap for (default 5, max 10)' },
+      },
+    },
+  },
+  {
     name: 'search_groups',
     description: '[group] Search VRChat groups by name. Returns matching groups (query param; API requires query, NOT search).',
     inputSchema: {

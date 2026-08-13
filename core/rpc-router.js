@@ -48,6 +48,7 @@ import {
   handleGetGroupInfo,
   handleGetGroupInstances,
   handleGetGroupAnnouncement,
+  handleGetGroupHeat,
   handleSearchGroups,
   handleSearchWorlds,
   handleJoinGroup,
@@ -283,6 +284,9 @@ export async function handleRpc(rpc, session, res) {
             break;
           case 'get_group_announcement':
             result = await rateLimiter.execute(() => handleGetGroupAnnouncement(args));
+            break;
+          case 'get_group_heat':
+            result = await rateLimiter.execute(() => handleGetGroupHeat(args));
             break;
           case 'search_groups':
             result = await rateLimiter.execute(() => handleSearchGroups(args));
