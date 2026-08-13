@@ -215,6 +215,8 @@ export async function fetchWorldStats(api, rateLimiter, { worldId, worldName }) 
       const r = await rateLimiter.execute(() => api._request('GET', `/worlds?search=${encodeURIComponent(worldName)}&n=10`));
       if (r.status === 200 && Array.isArray(r.data) && r.data.length > 0) {
         // 优先精确名称匹配（忽略大小写/全角空格），避免特殊字符查询（如【】）命中错误世界
+        // ⚠️ 无匹配时返回 null 而不是盲取第一个——VRChat 搜索对中日文模糊匹配极差，
+        // 盲取会把不相关世界（如 Spirits of the Sea）错记到博主推荐下
         const target = worldName.toLowerCase().replace(/[\s\u3000]+/g, '');
         let best = null;
         for (const w of r.data) {
@@ -223,7 +225,8 @@ export async function fetchWorldStats(api, rateLimiter, { worldId, worldName }) 
           // 模糊兜底：包含关系（查询名是结果名的子串，或反之）
           if (!best && (wname.includes(target) || target.includes(wname))) best = w;
         }
-        const first = best || r.data[0];
+        const first = best || null;
+        if (!first) return null;
         // 搜索响应若已含 visits 直接映射，否则补查详情
         if (first && typeof first.visits === 'number') {
           return mapWorld(first);
