@@ -141,13 +141,19 @@ export function parseRss(xml, screenName) {
       if (name && !worldNames.includes(name)) worldNames.push(name);
     }
 
-    // 三行格式（八谷凛奈等）："世界名\n作者名\n-- 描述" 且文本带 #VRChat_world紹介
-    // 只在确实像世界推荐推文时启用，避免误抓普通闲聊
+    // 三行格式（八谷凛奈等）："世界名\n作者名\n-- 描述" 或 "世界名 作者名 -- 描述"
+    // 且文本带 #VRChat_world紹介
     const looksLikeWorldIntro = /#VRChat_world紹介|#VRChat_world紹介|ワールド紹介|World.*紹介/i.test(fullText);
     if (looksLikeWorldIntro && worldNames.length === 0 && worldIds.length === 0) {
-      const threeLine = fullText.match(/([^\n]{2,60})\n\s*([A-Za-z0-9_\-\.]{2,40})\n\s*--/);
-      if (threeLine) {
-        const wName = threeLine[1].trim();
+      // 优先同行式 "名称 作者 -- 描述"（Nitter 标题行，最可靠）
+      // 其次换行分隔三行式（desc 的 <br> 换行）
+      const inline = fullText.match(/([^\n#|]{2,60}?)\s+([A-Za-z0-9_\-\.]{2,40})\s+--\s+/);
+      const threeLine = !inline
+        ? fullText.match(/([^\n]{2,60})\n\s*([A-Za-z0-9_\-\.]{2,40})\n\s*--/)
+        : null;
+      const matched = inline || threeLine;
+      if (matched) {
+        const wName = matched[1].trim();
         if (wName && !/[#|]/.test(wName) && !/^RT\b/.test(wName)) {
           worldNames.push(wName);
         }
@@ -173,7 +179,10 @@ function extractTag(xml, tag) {
 
 function stripHtml(s) {
   // 块级标签保留换行（<br>、</p>、</blockquote>、<hr>），其余标签清掉
+  // <a href="..."> 保留完整 URL（显示文本可能被截断，如 vrchat.com/home/launch?world…）
   return s
+    .replace(/<a\s+[^>]*href="([^"]+)"[^>]*>/gi, '$1 ')
+    .replace(/<a\s+[^>]*href='([^']+)'[^>]*>/gi, '$1 ')
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/(p|blockquote|div|li)>/gi, '\n')
     .replace(/<hr\s*\/?>/gi, '\n')
