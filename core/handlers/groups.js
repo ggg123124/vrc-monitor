@@ -251,3 +251,103 @@ export async function handlePeekGroupAnnouncement({ groupId, confirm }) {
     }
   }
 }
+
+/**
+ * 群组热度 — 基于本地事件库聚合群组房活动:
+ *   - 热度榜: 窗口内群组房活动次数/活跃好友数/涉及世界数 + 较上一等长窗口趋势
+ *   - 热力图: 前 topK 个群按 (星期×小时) 的北京时区分桶分布
+ *   - 群名/成员数: group_cache 优先, 缺失查 API 并缓存
+ * 数据源: friend-location / user-location 事件中 location 含 ~group(grp_/gmem_xxx) 的群组房。
+ * VRChat 群组 ID 已从 grp_ 迁移为 gmem_ (2026-08 实测), 双前缀匹配。
+ */
+export async function handleGetGroupHeat({ days, startTime, endTime, topK = 5 }) {
+  const { storage, api } = ctx;
+
+  // ── 窗口解析: 默认最近 N 天(北京自然日), 或显式 startTime/endTime ──
+  let start, end;
+  if (startTime && endTime) {
+    start = new Date(startTime).toISOString();
+    end = new Date(endTime).toISOString();
+  } else {
+    const n = Math.min(Math.max(parseInt(days, 10) || 7, 1), 30);
+    const bjNow = new Date(Date.now() + 8 * 60 * 60 * 1000);
+    const todayStr = bjNow.toISOString().slice(0, 10);
+    end = new Date(`${todayStr}T23:59:59.999+08:00`).toISOString();
+    const first = new Date(`${todayStr}T00:00:00.000+08:00`);
+    first.setUTCDate(first.getUTCDate() - (n - 1));
+    start = new Date(`${first.toISOString().slice(0, 10)}T00:00:00.000+08:00`).toISOString();
+  }
+  const winLen = Date.parse(end) - Date.parse(start);
+  if (!(winLen > 0)) throw new Error('Invalid time window');
+  const prevStart = new Date(Date.parse(start) - winLen).toISOString();
+
+  // ── 聚合 ──
+  const groups = storage.getGroupHeat(start, end);
+  const prev = storage.getGroupHeat(prevStart, start);
+
+  // ── 群名/成员数回填 (group_cache 优先, 缺失查 API 并缓存) ──
+  // 只回填活动最多的 backfillN 个群, 避免冷启动时串行 API 拖垮响应(周报场景才全量回填)
+  const ranked = [...groups.entries()].map(([gid, s]) => {
+    const prevCount = prev.has(gid) ? prev.get(gid).count : 0;
+    const deltaPct = prevCount === 0
+      ? (s.count > 0 ? 100 : 0)
+      : Math.round(((s.count - prevCount) / prevCount) * 100);
+    return {
+      groupId: gid,
+      name: '',
+      memberCount: 0,
+      activityCount: s.count,
+      friendCount: s.users.size,
+      worldCount: s.worlds.size,
+      prevActivityCount: prevCount,
+      trendPct: deltaPct,
+    };
+  }).sort((a, b) => b.activityCount - a.activityCount);
+
+  const k = Math.min(Math.max(parseInt(topK, 10) || 5, 1), 10);
+  const backfillN = Math.min(ranked.length, Math.max(10, k * 2));
+  const backfillIds = new Set(ranked.slice(0, backfillN).map((g) => g.groupId));
+  const cachedGids = [];
+  for (const g of ranked) {
+    if (!backfillIds.has(g.groupId)) continue;
+    const cached = storage.getGroupCached(g.groupId);
+    if (cached && cached.name) {
+      g.name = cached.name;
+      g.memberCount = cached.member_count || 0;
+      cachedGids.push(g.groupId);
+    }
+  }
+  const missing = ranked.filter((g) => backfillIds.has(g.groupId) && !cachedGids.includes(g.groupId));
+  for (const g of missing) {
+    try {
+      const r = await api._request('GET', `/groups/${g.groupId}`);
+      if (r.status === 200 && r.data) {
+        g.name = r.data.name || g.groupId;
+        g.memberCount = r.data.memberCount || 0;
+        storage.upsertGroupCache({
+          groupId: g.groupId, name: r.data.name || '', description: r.data.description || '',
+          memberCount: r.data.memberCount || 0,
+        });
+      } else g.name = g.groupId;
+    } catch { g.name = g.groupId; }
+  }
+  const heatmap = {};
+  const rankByName = new Map(ranked.map((g) => [g.groupId, g.name]));
+  for (const [gid, s] of [...groups.entries()].sort((a, b) => b[1].count - a[1].count).slice(0, k)) {
+    const cells = {};
+    for (const [key, count] of s.hourly) {
+      const [dow, hour] = key.split(':');
+      if (!cells[dow]) cells[dow] = {};
+      cells[dow][hour] = count;
+    }
+    heatmap[gid] = { name: rankByName.get(gid) || gid, cells };
+  }
+
+  return {
+    window: { start, end, prevStart },
+    totalActivity: ranked.reduce((a, g) => a + g.activityCount, 0),
+    groupCount: ranked.length,
+    groups: ranked,
+    heatmap,
+  };
+}

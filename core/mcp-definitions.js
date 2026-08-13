@@ -515,6 +515,42 @@ export const CUSTOM_TOOLS = [
     },
   },
   {
+    name: 'search_planet_worlds',
+    description: '[query·地图] Search VRChat worlds on PlanetVRC (planetvrchat.net, Japanese world directory) by keyword. Returns world name, wrld_id (when enriched), platform, categories, favorites/visitors counts. Useful for finding worlds by Japanese/English keywords that the VRChat API search may miss.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Keyword (supports Japanese/English)' },
+        limit: { type: 'number', default: 5, description: 'Max results (default 5, max 8; each result fetches its detail page for wrld_id/stats)' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'recommend_planet_worlds',
+    description: '[query·推荐] PlanetVRC world rankings (planetvrchat.net): popular (most visited), new (recently published), or updated. Returns worlds with wrld_id, maxPlayers, visitors, favorites, publishedAt.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sort: { type: 'string', default: 'popular', description: 'popular | new | updated' },
+        limit: { type: 'number', default: 5, description: 'Max results (default 5, max 8)' },
+      },
+    },
+  },
+  {
+    name: 'get_group_heat',
+    description: '[query·热度] Group activity heat: rank groups by how much your friends/you were in their group rooms (activityCount, friendCount, worldCount, trendPct vs previous equal window) + day-of-week×hour Beijing-time heatmap for top groups. Data from local event history (supports grp_/gmem_ ids).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        days: { type: 'number', default: 7, description: 'Analyze last N days (Beijing natural days, default 7, max 30)' },
+        startTime: { type: 'string', description: 'ISO 8601 start (optional, overrides days)' },
+        endTime: { type: 'string', description: 'ISO 8601 end (optional, must pair with startTime)' },
+        topK: { type: 'number', default: 5, description: 'Number of top groups to include a heatmap for (default 5, max 10)' },
+      },
+    },
+  },
+  {
     name: 'search_groups',
     description: '[group] Search VRChat groups by name. Returns matching groups (query param; API requires query, NOT search).',
     inputSchema: {

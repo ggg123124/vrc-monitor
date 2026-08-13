@@ -26,6 +26,8 @@ metadata:
 | `search_users` | 按名字搜索用户 |
 | `search_groups` | 按名字搜索群组（API 用 query 参数，不是 search） |
 | `search_worlds` | 按名字搜索世界（英文/日文走 API；中文自动加本地缓存兜底） |
+| `search_planet_worlds` | **PlanetVRC 地图检索**（planetvrchat.net 日文世界目录）：关键词搜索 → 世界名/wrld_id/平台/分类/收藏数；适合 VRChat API 搜不到的日文/小众图。limit 最大 8（每个结果抓详情页补 wrld_id，约 1-2s/个） |
+| `recommend_planet_worlds` | **PlanetVRC 推荐排行**：sort=popular（访问者数最多）/ new（最新发布）/ updated（最新更新）→ 世界+wrld_id+最大人数+访问量+收藏数+公开日 |
 | `backup_database` | 立即备份数据库（WAL 在线备份，保留最近 2 份到 backups/）；服务启动 + 每 24h 自动备份 |
 | `get_friend_events` | 某好友的事件历史（本地库） |
 | `get_recent_events` | 最新事件流 |
@@ -64,6 +66,7 @@ metadata:
 | `get_group_info` | 群组详情（名称/成员数/shortCode/描述/认证状态/joinState(open/request/invite)；`includeAnnouncement: true` 附带公告，非成员为 null） |
 | `get_group_instances` | **群组当前开的房**（group rooms）：instanceId/location/memberCount + 世界信息；空 = 没开房。适合"XX 群今晚有没有活动房"类问题 |
 | `get_group_announcement` | 群组公告（title/text/作者/时间；无公告或非成员返回 null 不报错） |
+| `get_group_heat` | **群组热度**：群组房活动热度榜（活动次数/活跃好友/世界数/成员数/趋势）+ 前 topK 群（星期×小时）热力图；`grp_`/`gmem_` 兼容 |
 | `join_group` | 加入群组（open 群直接加入；已是成员返回 alreadyMember:true；`groupId` 必填） |
 | `leave_group` | 退出群组（`POST /groups/{id}/leave`；必须 `confirm: true`；非成员返回 notMember） |
 | `peek_group_announcement` | **窥探群公告**：一键「加入→读公告→退出」，仅对 open 群生效，需 `confirm: true` |

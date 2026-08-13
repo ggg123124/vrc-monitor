@@ -142,10 +142,11 @@ export async function handleGetWeeklyReport({ days = 7 }) {
     } catch { worldNameMap[wid] = wid; }
   }
 
-  // 5. 群组活动（自己进过的群组房）——从 sessions 对应的事件里找 ~group(grp_xxx)
+  // 5. 群组活动（自己进过的群组房）——从 sessions 对应的事件里找 ~group(grp_/gmem_xxx)
   //    直接查 user-location 事件的 groupId
   const myGroupRows = storage._query(
-    `SELECT content_json, created_at FROM events WHERE type='user-location' AND created_at >= $s AND created_at <= $e AND content_json LIKE '%~group(grp_%' ORDER BY created_at`,
+    `SELECT content_json, created_at FROM events WHERE type='user-location' AND created_at >= $s AND created_at <= $e
+     AND (content_json LIKE '%~group(grp_%' OR content_json LIKE '%~group(gmem_%') ORDER BY created_at`,
     { $s: startIso, $e: endIso }
   );
   const groupActivities = [];
@@ -154,7 +155,8 @@ export async function handleGetWeeklyReport({ days = 7 }) {
     try {
       const c = JSON.parse(row.content_json);
       const loc = c.location || '';
-      const m = loc.match(/~group\((grp_[a-f0-9-]+)\)/);
+      // VRChat 群组 ID 已从 grp_ 迁移为 gmem_ (2026-08 实测), 两种前缀都匹配
+      const m = loc.match(/~group\((grp_[a-f0-9-]+|gmem_[a-f0-9-]+)\)/);
       if (m) {
         groupIds.add(m[1]);
         const wid = loc.split(':')[0];
