@@ -769,7 +769,9 @@ export class Storage {
 
   getFriendGroupStats(startTime, endTime) {
     const rows = this._query(
-      `SELECT content_json FROM events WHERE type='friend-location' AND content_json LIKE '%~group(grp_%' AND created_at >= $start AND created_at <= $end`,
+      `SELECT content_json FROM events WHERE type='friend-location'
+       AND (content_json LIKE '%~group(grp_%' OR content_json LIKE '%~group(gmem_%')
+       AND created_at >= $start AND created_at <= $end`,
       { $start: startTime, $end: endTime }
     );
     const stats = new Map(); // groupId -> {count, users:Set, worlds:Set}
@@ -777,7 +779,8 @@ export class Storage {
       try {
         const c = JSON.parse(row.content_json);
         const loc = c.location || '';
-        const m = loc.match(/~group\((grp_[a-f0-9-]+)\)/);
+        // VRChat 群组 ID 已从 grp_ 迁移为 gmem_ (2026-08 实测), 两种前缀都匹配
+        const m = loc.match(/~group\((grp_[a-f0-9-]+|gmem_[a-f0-9-]+)\)/);
         if (m && loc.startsWith('wrld_')) {
           const gid = m[1];
           if (!stats.has(gid)) stats.set(gid, { count: 0, users: new Set(), worlds: new Set() });
@@ -787,6 +790,45 @@ export class Storage {
       } catch {}
     }
     return stats;
+  }
+
+  /**
+   * 群组热度聚合: 统计窗口内好友/自己在群组房的活动事件
+   * (type=friend-location|user-location 且 location 含 ~group(gmem_/grp_xxx)).
+   * 返回 Map<groupId, {count, users:Set, worlds:Set, hourly:Map<'dow:hour', count>}>
+   * 时间按北京时区分桶 (dow: 0=周日..6=周六).
+   */
+  getGroupHeat(startIso, endIso) {
+    const rows = this._query(
+      `SELECT type, content_json, created_at FROM events
+       WHERE (type='friend-location' OR type='user-location')
+         AND created_at >= $start AND created_at <= $end
+         AND (content_json LIKE '%~group(grp_%' OR content_json LIKE '%~group(gmem_%')
+       ORDER BY created_at ASC`,
+      { $start: startIso, $end: endIso }
+    );
+    const groups = new Map();
+    for (const row of rows) {
+      try {
+        const c = JSON.parse(row.content_json);
+        const loc = c.location || '';
+        const m = loc.match(/~group\((grp_[a-f0-9-]+|gmem_[a-f0-9-]+)\)/);
+        if (!m || !loc.startsWith('wrld_')) continue;
+        const gid = m[1];
+        if (!groups.has(gid)) groups.set(gid, { count: 0, users: new Set(), worlds: new Set(), hourly: new Map() });
+        const s = groups.get(gid);
+        s.count++;
+        s.users.add(c.userId || '');
+        s.worlds.add(loc.split(':')[0]);
+        const d = new Date(row.created_at);
+        if (!Number.isNaN(d.getTime())) {
+          const bj = new Date(d.getTime() + 8 * 60 * 60 * 1000);
+          const key = `${bj.getUTCDay()}:${bj.getUTCHours()}`;
+          s.hourly.set(key, (s.hourly.get(key) || 0) + 1);
+        }
+      } catch {}
+    }
+    return groups;
   }
 
   getStats() {
