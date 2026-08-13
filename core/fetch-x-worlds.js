@@ -132,8 +132,9 @@ export function parseRss(xml, screenName) {
 
     // 世界名（多格式兼容）：
     //   "World: XXX" / "ワールド：XXX" / "World name: XXX" / "World：XXX"
+    // 名字在 By:/Platform:/换行/# 处截断，避免吞掉作者和描述
     const worldNames = [];
-    const nameRe = /(?:World(?:\s*name)?|ワールド)\s*[:：]\s*([^\n#|]{2,80})/gi;
+    const nameRe = /(?:World(?:\s*name)?|ワールド)\s*[:：]\s*([^\n#|]{2,80}?)(?=\s*(?:By|by|作者|Platform|プラットフォーム)[:：]|\n|#|\||$)/gi;
     let nm;
     while ((nm = nameRe.exec(fullText)) !== null) {
       const name = nm[1].replace(/https?:\/\/\S+/g, '').trim().replace(/[|｜].*$/, '').trim();
@@ -171,7 +172,16 @@ function extractTag(xml, tag) {
 }
 
 function stripHtml(s) {
-  return s.replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;/gi, ' ').replace(/\s+/g, ' ').trim();
+  // 块级标签保留换行（<br>、</p>、</blockquote>、<hr>），其余标签清掉
+  return s
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|blockquote|div|li)>/gi, '\n')
+    .replace(/<hr\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&[a-z]+;/gi, ' ')
+    .replace(/\n{2,}/g, '\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
 }
 
 function decodeXml(s) {
@@ -193,9 +203,18 @@ export async function fetchWorldStats(api, rateLimiter, { worldId, worldName }) 
     }
     if (worldName) {
       // 搜索兜底：按名字查世界，拿到 worldId 后再查详情（搜索端点不含 visits）
-      const r = await rateLimiter.execute(() => api._request('GET', `/worlds?search=${encodeURIComponent(worldName)}&n=5`));
+      const r = await rateLimiter.execute(() => api._request('GET', `/worlds?search=${encodeURIComponent(worldName)}&n=10`));
       if (r.status === 200 && Array.isArray(r.data) && r.data.length > 0) {
-        const first = r.data[0];
+        // 优先精确名称匹配（忽略大小写/全角空格），避免特殊字符查询（如【】）命中错误世界
+        const target = worldName.toLowerCase().replace(/[\s\u3000]+/g, '');
+        let best = null;
+        for (const w of r.data) {
+          const wname = (w.name || '').toLowerCase().replace(/[\s\u3000]+/g, '');
+          if (wname === target) { best = w; break; }
+          // 模糊兜底：包含关系（查询名是结果名的子串，或反之）
+          if (!best && (wname.includes(target) || target.includes(wname))) best = w;
+        }
+        const first = best || r.data[0];
         // 搜索响应若已含 visits 直接映射，否则补查详情
         if (first && typeof first.visits === 'number') {
           return mapWorld(first);
