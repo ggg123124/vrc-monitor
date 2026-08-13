@@ -26,6 +26,8 @@ metadata:
 | `search_users` | 按名字搜索用户 |
 | `search_groups` | 按名字搜索群组（API 用 query 参数，不是 search） |
 | `search_worlds` | 按名字搜索世界（英文/日文走 API；中文自动加本地缓存兜底） |
+| `search_planet_worlds` | **PlanetVRC 地图检索**（planetvrchat.net 日文世界目录）：关键词搜索 → 世界名/wrld_id/平台/分类/收藏数；适合 VRChat API 搜不到的日文/小众图。limit 最大 8（每个结果抓详情页补 wrld_id，约 1-2s/个） |
+| `recommend_planet_worlds` | **PlanetVRC 推荐排行**：sort=popular（访问者数最多）/ new（最新发布）/ updated（最新更新）→ 世界+wrld_id+最大人数+访问量+收藏数+公开日 |
 | `backup_database` | 立即备份数据库（WAL 在线备份，保留最近 2 份到 backups/）；服务启动 + 每 24h 自动备份 |
 | `get_friend_events` | 某好友的事件历史（本地库） |
 | `get_recent_events` | 最新事件流 |
