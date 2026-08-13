@@ -22,20 +22,11 @@ import { FriendStateManager } from './core/friend-state.js';
 import { createServer } from './core/http-server.js';
 import { fetchOtpFromEmail } from './core/otp-fetcher.js';
 
-// ── 路径常量 → 写入 ctx.paths ──
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PORT = 8799;
-const COOKIE_FILE = path.join(__dirname, 'auth_cookie.txt');
-const CRED_FILE = path.join(__dirname, 'credentials.json');
-const DB_PATH = path.join(__dirname, 'vrc-monitor.sqlite3');
-const BACKUP_DIR = path.join(__dirname, 'backups');
-const BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000; // 每 24h 自动备份
-
-Object.assign(ctx.paths, { __dirname, PORT, COOKIE_FILE, CRED_FILE, DB_PATH, BACKUP_DIR, BACKUP_INTERVAL_MS });
 
 // ── .env 加载（只取 VRC_MONITOR_*）──
 // 注意：无条件覆盖 process.env——服务被插件 spawn 时可能继承旧值，跳过会导致 .env 配置失效
-// 个人配置（分组权重/联系人名单等）放仓库根 .env（.gitignore 已忽略），不硬编码进代码
+// 个人配置（分组权重/联系人名单/DB 路径等）放仓库根 .env（.gitignore 已忽略），不硬编码进代码
 try {
   const envFile = path.join(__dirname, '.env');
   if (existsSync(envFile)) {
@@ -47,6 +38,21 @@ try {
     }
   }
 } catch (e) { /* .env 加载失败不阻断 */ }
+
+// ── 路径常量 → 写入 ctx.paths ──
+// DB / 备份目录可通过 .env 的 VRC_MONITOR_DB_PATH / VRC_MONITOR_BACKUP_DIR 覆盖
+const PORT = 8799;
+const COOKIE_FILE = path.join(__dirname, 'auth_cookie.txt');
+const CRED_FILE = path.join(__dirname, 'credentials.json');
+const DB_PATH = process.env.VRC_MONITOR_DB_PATH
+  ? path.resolve(process.env.VRC_MONITOR_DB_PATH)
+  : path.join(__dirname, 'vrc-monitor.sqlite3');
+const BACKUP_DIR = process.env.VRC_MONITOR_BACKUP_DIR
+  ? path.resolve(process.env.VRC_MONITOR_BACKUP_DIR)
+  : path.join(__dirname, 'backups');
+const BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000; // 每 24h 自动备份
+
+Object.assign(ctx.paths, { __dirname, PORT, COOKIE_FILE, CRED_FILE, DB_PATH, BACKUP_DIR, BACKUP_INTERVAL_MS });
 
 // ── WebSocket 事件 → 好友状态更新 ──
 async function _updateFriendState(event) {
