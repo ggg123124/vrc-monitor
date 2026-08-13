@@ -104,6 +104,15 @@ import {
   handleBackupDatabase,
 } from './handlers/misc.js';
 
+import {
+  handleXWorldDigest,
+  handleXScanCreators,
+  handleXCreators,
+  handleXAddCreator,
+  handleXRemoveCreator,
+  handleXWorlds,
+} from './handlers/x-worlds.js';
+
 export async function handleRpc(rpc, session, res) {
   const { id, method, params } = rpc;
   const { api, rateLimiter } = ctx;
@@ -378,6 +387,25 @@ export async function handleRpc(rpc, session, res) {
             result = await rateLimiter.execute(() => handleFavoriteWorld(args));
             break;
           }
+          // X 博主世界推荐
+          case 'x_world_digest':
+            result = await handleXWorldDigest(args);
+            break;
+          case 'x_scan_creators':
+            result = await handleXScanCreators();
+            break;
+          case 'x_creators':
+            result = handleXCreators();
+            break;
+          case 'x_add_creator':
+            result = handleXAddCreator(args);
+            break;
+          case 'x_remove_creator':
+            result = handleXRemoveCreator(args);
+            break;
+          case 'x_worlds':
+            result = handleXWorlds(args);
+            break;
           default:
             throw new Error(`Unknown tool: ${name}`);
         }

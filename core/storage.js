@@ -13,6 +13,7 @@ import path from 'node:path';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DDL_PATH = path.join(__dirname, 'init-db.sql');
+const X_WORLDS_DDL_PATH = path.join(__dirname, 'init-x-worlds.sql');
 
 export class Storage {
   /** @type {import('better-sqlite3').Database} */
@@ -27,6 +28,13 @@ export class Storage {
 
     const ddl = readFileSync(DDL_PATH, 'utf-8');
     this.db.exec(ddl);
+    // X 博主世界推荐表（x_world_digest 工具，幂等 CREATE IF NOT EXISTS）
+    try {
+      const xddl = readFileSync(X_WORLDS_DDL_PATH, 'utf-8');
+      this.db.exec(xddl);
+    } catch (e) {
+      console.warn(`[storage] x-worlds DDL 加载失败: ${e.message}`);
+    }
     // 迁移：旧库 world_cache 缺 note 列
     const worldCols = this._query(`PRAGMA table_info(world_cache)`);
     if (!worldCols.some(c => c.name === 'note')) {
@@ -1006,4 +1014,71 @@ export class Storage {
 
   save() { this._save(); }
   close() { this._save(); this.db.close(); }
+
+  // ── X 博主世界推荐（x_world_digest） ──
+
+  getXWorld(worldId) {
+    const rows = this._query(
+      `SELECT * FROM x_world_recommendations WHERE world_id = $worldId`,
+      { $worldId: worldId }
+    );
+    return rows.length > 0 ? rows[0] : null;
+  }
+
+  insertXWorld({ worldId, worldName, authorName, description, imageUrl, favorites, visits, popularity, capacity, tags, firstSeenAt, lastRecommendedAt, creators, tweetCount }) {
+    this._run(
+      `INSERT OR REPLACE INTO x_world_recommendations
+        (world_id, world_name, author_name, description, image_url, favorites, visits, popularity, capacity, tags,
+         first_seen_at, last_recommended_at, creators, tweet_count)
+       VALUES ($worldId, $worldName, $authorName, $description, $imageUrl, $favorites, $visits, $popularity, $capacity, $tags,
+         $firstSeenAt, $lastRecommendedAt, $creators, $tweetCount)`,
+      {
+        $worldId: worldId, $worldName: worldName || '', $authorName: authorName || '',
+        $description: description || '', $imageUrl: imageUrl || '',
+        $favorites: favorites || 0, $visits: visits || 0, $popularity: popularity || 0,
+        $capacity: capacity || 0, $tags: tags || '[]',
+        $firstSeenAt: firstSeenAt || new Date().toISOString(),
+        $lastRecommendedAt: lastRecommendedAt || new Date().toISOString(),
+        $creators: creators || '[]', $tweetCount: tweetCount || 1,
+      }
+    );
+  }
+
+  updateXWorld(worldId, { worldName, authorName, description, imageUrl, favorites, visits, popularity, capacity, tags, lastRecommendedAt, creators, tweetCount }) {
+    this._run(
+      `UPDATE x_world_recommendations SET
+         world_name = $worldName, author_name = $authorName, description = $description, image_url = $imageUrl,
+         favorites = $favorites, visits = $visits, popularity = $popularity, capacity = $capacity, tags = $tags,
+         last_recommended_at = $lastRecommendedAt, creators = $creators, tweet_count = $tweetCount
+       WHERE world_id = $worldId`,
+      {
+        $worldId: worldId, $worldName: worldName || '', $authorName: authorName || '',
+        $description: description || '', $imageUrl: imageUrl || '',
+        $favorites: favorites || 0, $visits: visits || 0, $popularity: popularity || 0,
+        $capacity: capacity || 0, $tags: tags || '[]',
+        $lastRecommendedAt: lastRecommendedAt || new Date().toISOString(),
+        $creators: creators || '[]', $tweetCount: tweetCount || 1,
+      }
+    );
+  }
+
+  getXWorldsSince(sinceIso, { creator, limit = 100 } = {}) {
+    let sql = `SELECT * FROM x_world_recommendations WHERE last_recommended_at >= $since`;
+    const params = { $since: sinceIso };
+    if (creator) {
+      sql += ` AND creators LIKE $creator`;
+      params.$creator = `%${creator}%`;
+    }
+    sql += ` ORDER BY last_recommended_at DESC LIMIT $limit`;
+    params.$limit = limit;
+    return this._query(sql, params);
+  }
+
+  getAllXWorlds(limit = 200) {
+    return this._query(`SELECT * FROM x_world_recommendations ORDER BY favorites DESC LIMIT $limit`, { $limit: limit });
+  }
+
+  clearXWorlds() {
+    this._run(`DELETE FROM x_world_recommendations`);
+  }
 }
