@@ -141,6 +141,10 @@ export function parseRss(xml, screenName) {
       if (name && !worldNames.includes(name)) worldNames.push(name);
     }
 
+    // 作者名提取（By: XXX，到 Platform/#/换行/描述边界截断）
+    // 用于搜索辅助匹配，防止"名字包含"误报（如 NOIR → Noir - Nocturne）
+    const authorName = extractAuthor(fullText);
+
     // 三行格式（八谷凛奈等）："世界名\n作者名\n-- 描述" 或 "世界名 作者名 -- 描述"
     // 且文本带 #VRChat_world紹介
     const looksLikeWorldIntro = /#VRChat_world紹介|#VRChat_world紹介|ワールド紹介|World.*紹介/i.test(fullText);
@@ -167,6 +171,7 @@ export function parseRss(xml, screenName) {
       text: title,
       worldIds,
       worldNames,
+      authorName,
     });
   }
   return tweets;
@@ -199,13 +204,32 @@ function decodeXml(s) {
     .replace(/&apos;/g, "'").replace(/&amp;/g, '&');
 }
 
+/**
+ * 名称归一化：小写、去空格/全角空格、去零宽字符，用于匹配比较
+ */
+function normalizeName(s) {
+  return (s || '').toLowerCase().replace(/[\s\u3000\u200b-\u200d\ufeff]+/g, '').trim();
+}
+
+/**
+ * 从推文文本提取作者名（By: XXX 格式）。
+ * 截断边界：Platform/プラットフォーム/#/换行/竖线/行尾。
+ * 注意：无 Platform 分隔的格式（如 "World:X By:Y 描述..."）作者后紧跟描述，
+ * 此时可能带出描述开头——但这类推文通常有链接（走 worldIds 路径），
+ * 只有名字搜索的推文（Bradlee101 格式）都有 Platform 分隔，提取准确。
+ */
+function extractAuthor(text) {
+  const m = text.match(/(?:^|\s)By\s*[:：]\s*([^\n#|]{2,40}?)(?=\s*(?:Platform|プラットフォーム)[:：]?|\n|#|\||$)/i);
+  return m ? m[1].trim() : '';
+}
+
 // ── 世界数据查询 ───────────────────────────────────────────
 
 /**
  * 查世界详情（VRChat API），带限流。返回完整统计字段或 null。
  * worldId 或 worldName 二选一（worldName 走搜索，取第一个结果）。
  */
-export async function fetchWorldStats(api, rateLimiter, { worldId, worldName }) {
+export async function fetchWorldStats(api, rateLimiter, { worldId, worldName, authorName }) {
   try {
     if (worldId) {
       return await fetchWorldDetail(api, rateLimiter, worldId);
@@ -214,19 +238,38 @@ export async function fetchWorldStats(api, rateLimiter, { worldId, worldName }) 
       // 搜索兜底：按名字查世界，拿到 worldId 后再查详情（搜索端点不含 visits）
       const r = await rateLimiter.execute(() => api._request('GET', `/worlds?search=${encodeURIComponent(worldName)}&n=10`));
       if (r.status === 200 && Array.isArray(r.data) && r.data.length > 0) {
-        // 优先精确名称匹配（忽略大小写/全角空格），避免特殊字符查询（如【】）命中错误世界
-        // ⚠️ 无匹配时返回 null 而不是盲取第一个——VRChat 搜索对中日文模糊匹配极差，
-        // 盲取会把不相关世界（如 Spirits of the Sea）错记到博主推荐下
-        const target = worldName.toLowerCase().replace(/[\s\u3000]+/g, '');
-        let best = null;
+        // 匹配策略（VRChat 搜索对中日文/短名匹配极差，需多重校验防误报）：
+        // 1. 作者名强过滤：若推文带 By: 作者，结果作者必须匹配（归一化忽略大小写/空格）
+        // 2. 名字精确匹配优先，其次包含匹配
+        // 3. 无匹配返回 null（宁可漏抓，不可错记）
+        const target = normalizeName(worldName);
+        const targetAuthor = authorName ? normalizeName(authorName) : '';
+        let exact = null;    // 名字精确匹配
+        let inclAuthor = null; // 名字包含且作者匹配
+        let incl = null;     // 名字包含（无作者约束）
+
         for (const w of r.data) {
-          const wname = (w.name || '').toLowerCase().replace(/[\s\u3000]+/g, '');
-          if (wname === target) { best = w; break; }
-          // 模糊兜底：包含关系（查询名是结果名的子串，或反之）
-          if (!best && (wname.includes(target) || target.includes(wname))) best = w;
+          const wname = normalizeName(w.name || '');
+          const wauthor = normalizeName(w.authorName || '');
+          const nameMatch = wname === target;
+          const containsMatch = wname.includes(target) || target.includes(wname);
+          const authorMatch = targetAuthor && (wauthor === targetAuthor || wauthor.includes(targetAuthor) || targetAuthor.includes(wauthor));
+
+          if (nameMatch && (!targetAuthor || authorMatch)) { exact = w; break; }
+          if (!exact && containsMatch && (!targetAuthor || authorMatch)) inclAuthor = w;
+          // 无作者约束时才用纯包含兜底（有作者名时必须作者匹配，防误报）
+          if (!exact && !inclAuthor && containsMatch && !targetAuthor) incl = w;
         }
-        const first = best || null;
-        if (!first) return null;
+
+        const first = exact || inclAuthor || incl || null;
+        if (!first) {
+          // 名字搜索失败且有作者名 → 用 userId 参数精确搜该作者的世界
+          // （VRChat 搜索对短名/新世界常搜不到，userId 过滤能直达作者作品）
+          if (targetAuthor) {
+            return await fetchWorldByAuthor(api, rateLimiter, worldName, authorName);
+          }
+          return null;
+        }
         // 搜索响应若已含 visits 直接映射，否则补查详情
         if (first && typeof first.visits === 'number') {
           return mapWorld(first);
@@ -248,6 +291,45 @@ async function fetchWorldDetail(api, rateLimiter, worldId) {
   const r = await rateLimiter.execute(() => api._request('GET', `/worlds/${encodeURIComponent(worldId)}`));
   if (r.status === 200 && r.data) return mapWorld(r.data);
   return null;
+}
+
+/**
+ * 按作者名搜世界：先查作者的 userId，再带 userId 参数搜世界。
+ * 用于名字搜索失败时（VRChat 搜索对短名/新世界常搜不到）。
+ */
+async function fetchWorldByAuthor(api, rateLimiter, worldName, authorName) {
+  try {
+    // 1) 搜作者 userId（取第一个精确匹配）
+    const ur = await rateLimiter.execute(() => api._request('GET', `/users?search=${encodeURIComponent(authorName)}&n=5`));
+    if (ur.status !== 200 || !Array.isArray(ur.data) || ur.data.length === 0) return null;
+    const target = normalizeName(authorName);
+    let user = null;
+    for (const u of ur.data) {
+      if (normalizeName(u.displayName || '') === target) { user = u; break; }
+    }
+    if (!user) user = ur.data[0];
+    if (!user?.id) return null;
+
+    // 2) 带 userId 搜该作者的世界
+    const wr = await rateLimiter.execute(() => api._request('GET', `/worlds?search=${encodeURIComponent(worldName)}&userId=${encodeURIComponent(user.id)}&n=10`));
+    if (wr.status === 200 && Array.isArray(wr.data) && wr.data.length > 0) {
+      // 名字匹配（作者已被 userId 过滤）
+      const targetName = normalizeName(worldName);
+      let best = null;
+      for (const w of wr.data) {
+        const wname = normalizeName(w.name || '');
+        if (wname === targetName) { best = w; break; }
+        if (!best && (wname.includes(targetName) || targetName.includes(wname))) best = w;
+      }
+      if (best) {
+        if (typeof best.visits === 'number') return mapWorld(best);
+        if (best.id) return await fetchWorldDetail(api, rateLimiter, best.id);
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 function mapWorld(w) {
@@ -300,7 +382,7 @@ export async function scanCreatorWorlds({ force = false } = {}) {
         }
         for (const name of t.worldNames) {
           if (t.worldIds.length === 0) {
-            pendingByName.push({ name, tweetId: t.id, tweetTime: t.time, tweetUrl: t.url });
+            pendingByName.push({ name, authorName: t.authorName, tweetId: t.id, tweetTime: t.time, tweetUrl: t.url });
           }
         }
       }
@@ -314,9 +396,9 @@ export async function scanCreatorWorlds({ force = false } = {}) {
           saved++;
         }
       }
-      // 2) 只有名字的（搜索兜底）
+      // 2) 只有名字的（搜索兜底，带作者名辅助匹配）
       for (const item of pendingByName) {
-        const stats = await fetchWorldStats(api, rateLimiter, { worldName: item.name });
+        const stats = await fetchWorldStats(api, rateLimiter, { worldName: item.name, authorName: item.authorName });
         if (stats) {
           saveRecommendation(storage, creator, stats, item);
           saved++;
