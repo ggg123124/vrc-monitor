@@ -3,7 +3,7 @@
 
 > 技术栈：Node.js + SQLite + WebSocket + MCP + Hermes 插件
 
-通过 WebSocket 实时采集好友上下线、世界切换、Avatar/状态变化并入库。以 55 个 MCP 工具向 AI Agent 暴露全部能力——不只查询，还涵盖社交互动（戳戳/邀请/好友请求）、媒体管理（emoji/相册/图库）、群组操作、推荐系统等。附带 Hermes 插件实现进程托管（自动拉起 + 崩溃自愈）。
+通过 WebSocket 实时采集好友上下线、世界切换、Avatar/状态变化并入库。以 56 个 MCP 工具向 AI Agent 暴露全部能力——不只查询，还涵盖社交互动（戳戳/邀请/好友请求）、媒体管理（emoji/相册/图库）、群组操作、推荐系统等。附带 Hermes 插件实现进程托管（自动拉起 + 崩溃自愈）。
 
 > 🤖 **AI Agent 优先项目**：程序只面向 AI Agent 使用与开发，人类不直接编码。详见下方「[项目定位](#-ai-agent-优先项目定位)」与 [DEVELOPMENT.md](./DEVELOPMENT.md)。
 
@@ -35,7 +35,7 @@ QQ 群：**851865556** — 欢迎加入，交流使用问题、功能建议与�
 
 ## ✨ 功能
 
-按能力域划分的功能概览，全部 55 个 MCP 工具与详细参数见下方「🔌 MCP 工具」。
+按能力域划分的功能概览，全部 56 个 MCP 工具与详细参数见下方「🔌 MCP 工具」。
 
 ### 📡 实时监控与认证自愈
 
@@ -58,7 +58,7 @@ QQ 群：**851865556** — 欢迎加入，交流使用问题、功能建议与�
 
 ### 👥 群组管理
 
-- 群组信息、群组房实时列表、加入/退出、公告窥探（加入→读公告→退出）
+- 群组信息、群组房实时列表、加入/退出、公告窥探（加入→读公告→退出）、群组热度（活动排行/热力图）
 
 ### 🗄 数据与洞察
 
@@ -99,7 +99,7 @@ curl http://127.0.0.1:8799/health
 
 | Skill | 内容 | 适用场景 |
 |-------|------|----------|
-| `skills/vrc-monitor-agent/` | 55 个 MCP 工具清单、5 大查询工作流（在线/同屏/时间线/上线规律/昵称）、常见陷阱、健康检查 | 日常好友查询与社交操作 |
+| `skills/vrc-monitor-agent/` | 56 个 MCP 工具清单、5 大查询工作流（在线/同屏/时间线/上线规律/昵称）、常见陷阱、健康检查 | 日常好友查询与社交操作 |
 | `skills/vrc-monitor-companion-query/` | 「谁和我/和 XX 一起玩过」同屏交叉查询的正确姿势（为何不委派子 agent） | 同屏/玩伴查询 |
 
 **安装方式**（以 Hermes 为例，其他 Agent 框架同理）——把 skill 目录复制到你的 skills 目录：
@@ -165,7 +165,7 @@ cp desktop/plugin.js "$HERMES_HOME/desktop-plugins/vrc-monitor/"
 - **双路检测**：状态文件 pid 存活 **或** 端口探测成功，均可识别为运行中（防状态文件丢失误判）
 - **日志**：`$HERMES_HOME/workspace/vrc-monitor/monitor.log`
 
-## 🔌 MCP 工具（55 个）
+## 🔌 MCP 工具（56 个）
 
 服务监听 `http://127.0.0.1:8799/mcp`，通过 HTTP SSE 提供 MCP 协议。Hermes 用户可在 `$HERMES_HOME/config.yaml`（Windows 为 `%LOCALAPPDATA%\hermes\config.yaml`）配置：
 
@@ -269,6 +269,7 @@ mcp_servers:
 | `get_group_info` | 群组详情（名称/成员数/shortCode/描述/认证状态/**joinState**(open/request/invite)等；`includeAnnouncement: true` 时附带公告，非成员为 null；`groupId` 必填） |
 | `get_group_instances` | **群组当前开放的实例（群组房）**：返回 instanceId/location/memberCount + 世界信息；空数组 = 没开房（`groupId` 必填） |
 | `get_group_announcement` | 群组公告（title/text/作者/时间；无公告或非成员返回 null 不报错；`groupId` 必填） |
+| `get_group_heat` | **群组热度**（2026-08-13 新增）：本地事件库聚合群组房活动——热度榜（活动次数/活跃好友数/涉及世界数/成员数 + 较上一等长窗口趋势 trendPct）+ 前 topK 群按（星期×小时）北京时区热力图；兼容 `grp_`/`gmem_` 双前缀群 ID。参数：`days`(默认7,最大30) 或 `startTime`/`endTime`、`topK`(默认5,最大10) |
 | `join_group` | 加入群组（open 群直接加入；已是成员返回 alreadyMember:true 不报错；`groupId` 必填） |
 | `leave_group` | 退出群组（`POST /groups/{id}/leave`；必须 `confirm: true`；非成员返回 notMember） |
 | `peek_group_announcement` | **窥探群公告**（2026-08-09 新增）：一键「加入→读公告→退出」，仅对 open 群生效，需 `confirm: true` |
@@ -290,12 +291,12 @@ mcp_servers:
 │   ├── vrchat-launch.js        # 打开实例统一入口（管道探测 + API 回退）
 │   ├── new-worlds.js           # 新世界扫描核心逻辑
 │   ├── backup.js               # 数据库在线备份
-│   ├── mcp-definitions.js      # MCP 工具定义（55 个工具）
+│   ├── mcp-definitions.js      # MCP 工具定义（56 个工具）
 │   ├── server-context.js       # 共享上下文（ctx 对象 + log + parseLocation）
 │   ├── http-server.js          # HTTP 服务器 + SSE 端点
 │   ├── rpc-router.js           # RPC 分发（tools/call → handler）
 │   ├── otp-fetcher.js          # OTP 邮箱获取
-│   └── handlers/               # 55 个 MCP 工具的 handler
+│   └── handlers/               # 56 个 MCP 工具的 handler
 │       ├── recommend.js       #   推荐系统（好友收藏位置/推荐加入/偏好/学习）
 │       ├── friends.js         #   好友查询（在线/详情/搜索/共同好友/添加/删除）
 │       ├── instance.js        #   实例操作（创建/自我邀请/打开世界）
