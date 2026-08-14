@@ -21,26 +21,19 @@ UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.
 IMG_MAX_W = 320          # 缩略图压缩宽度
 IMG_MAX_BYTES = 45 * 1024  # 单图内嵌上限 ~45KB
 PAGE_MAX = 500           # 默认拉取上限
+MCP_TIMEOUT = 1800       # 首次调用需查全部收藏详情（400×2.6s≈17min），超时给足
 
-CATEGORY_RULES = [
-    # 游戏（含运动/战斗/解谜/赛车/桌游/街机）
-    (re.compile(r'game|ゲーム|fps|racing|race|puzzle|謎解き|udon|battle|対戦|action|アクション|card|カード|sports|スポーツ|tennis|テニス|golf|ボウリング|bowling|shooting|シューティング|mafia|人狼|quiz|クイズ|escape|脱出|parkour|パルクール|obstacle|アスレチック', re.I), '🎮 游戏'),
-    # 恐怖（恐怖探索/解谜/精神污染/backroom）
-    (re.compile(r'horror|怖|ホラー|backroom|creepy|不気味|暗い|廃墟|abandoned|サイコ|psycho|呪い|curse|幽霊|ghost|心霊|怪異', re.I), '👻 恐怖'),
-    # 音乐（音乐欣赏/DJ/演唱会/舞池/音游/乐器）
-    (re.compile(r'music|音楽|dj|ライブ|concert|dance|舞|song|曲|piano|ピアノ|guitar|ギター|instrument|楽器|beat|ビート|k歌|卡拉ok|カラオケ|club|クラブ|party|パーティー|live|sound|サウンド|visualizer', re.I), '🎵 音乐体验'),
-    # 风景/观光（自然/城市/天空/海/山/星空/摄影胜地）
-    (re.compile(r'景観|景色|scenic|view|観光|landscape|nature|自然|海|sea|ocean|空|sky|山|mountain|星|star|夜空|night sky|夕日|sunset|sunrise|桜|sakura|雪|snow|湖|lake|森|forest|wood|滝|waterfall|river|川|庭園|garden|park|公園|bridge|橋|街|city|town|urban|夜|night|雪景色|紅葉|autumn|花|flower|温泉|hot spring|島|island', re.I), '🌄 风景/观光'),
-    # Avatar/模型（Avatar 世界/模型展示/改模/商店）
-    (re.compile(r'avatar|アバター|model|展示|改模|店|shop|store|衣装|outfit|clothes|fashion|コスプレ|cosplay|mascot|マスコット|photo booth', re.I), '🧍 Avatar/模型'),
-    # 社交/聚会（聊天/休息室/酒吧/咖啡/夜店/广场）
-    (re.compile(r'social|hangout|集合|club|バー|居酒屋|cafe|カフェ|bar|飲み|drink|ラウンジ|lounge|plaza|広場|meet|交流|集会|nightclub', re.I), '🍻 社交/聚会'),
-    # 休闲/睡觉（睡眠/放松/疗愈/发呆/ASMR）
-    (re.compile(r'vrcsleep|睡眠|寝る|sleep|chill|チル|relax|リラックス|heal|癒し|癒|comfy|居心地|cozy|まったり|のんびり|休憩|rest|nap|asmr|安眠|sleeping', re.I), '😴 休闲/睡觉'),
-    # 拍照（摄影/相机/取景）
-    (re.compile(r'photo|写真|撮影|カメラ|camera|photography|グラビア', re.I), '📷 拍照'),
-]
-
+# 依赖检查：PIL / markdown 缺失时给出友好提示
+try:
+    from PIL import Image
+except ImportError:
+    print('❌ 缺少依赖 PIL (Pillow)。安装: pip install Pillow 或 uv pip install Pillow')
+    sys.exit(1)
+try:
+    import markdown
+except ImportError:
+    print('❌ 缺少依赖 markdown。安装: pip install markdown 或 uv pip install markdown')
+    sys.exit(1)
 
 def mcp_call(tool, args=None):
     """调 MCP 工具（JSON-RPC over HTTP）"""
@@ -49,11 +42,13 @@ def mcp_call(tool, args=None):
     body = json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
                        'params': {'name': tool, 'arguments': args}}).encode()
     req = urllib.request.Request(MCP_URL, data=body, headers={'Content-Type': 'application/json'})
-    with urllib.request.urlopen(req, timeout=280) as r:
+    with urllib.request.urlopen(req, timeout=MCP_TIMEOUT) as r:
         raw = r.read().decode()
     for line in raw.splitlines():
         if line.startswith('data:'):
             d = json.loads(line[5:].strip())
+            if 'error' in d:
+                raise RuntimeError(f'MCP 错误: {d["error"].get("message", d["error"])}')
             for c in d.get('result', {}).get('content', []):
                 if c.get('type') == 'text':
                     return json.loads(c['text'])
@@ -69,26 +64,17 @@ def load_zh_cache():
         return {}
 
 
-def classify(w):
-    hay = f"{w.get('worldName','')} {(w.get('description','') or '')[:200]} {' '.join(w.get('tags', []) or [])}"
-    for re_, cat in CATEGORY_RULES:
-        if re_.search(hay):
-            return cat
-    return '其他'
-
-
 def fetch_and_build(limit):
-    """拉取收藏并按分类分组"""
+    """拉取收藏并按分类分组（分类复用 handler 返回的 category 字段，不重复实现）"""
     print('⏳ 拉取收藏世界...')
     data = mcp_call('get_my_favorite_worlds', {'limit': limit})
     worlds = data.get('worlds', [])
     print(f'  ✅ 收藏 {len(worlds)} 个 | 分类 {len(data.get("categories", []))} 类')
-    for w in worlds:
-        w['category'] = classify(w)
+    # handler 已分类，直接按 category 分组
     cats = {}
     order = []
     for w in worlds:
-        c = w['category']
+        c = w.get('category') or '其他'
         if c not in cats:
             cats[c] = []
             order.append(c)

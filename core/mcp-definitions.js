@@ -824,7 +824,7 @@ export const CUSTOM_TOOLS = [
   // ── 我的收藏世界分析 ──
   {
     name: 'get_my_favorite_worlds',
-    description: '[查询·收藏] 拉取当前账号收藏的全部世界，按标签分类（Avatar/恐怖/游戏/音乐/社交/拍照/休闲/风景/其他），返回世界名/作者/收藏/浏览/简介/分类。',
+    description: '[查询·收藏] 拉取当前账号收藏的全部世界，按标签分类（🎮游戏/👻恐怖/🎵音乐体验/🌄风景观光/🧍Avatar模型/🍻社交聚会/😴休闲睡觉/📷拍照/其他），返回世界名/作者/收藏/浏览/简介/分类。注意：首次调用（无缓存预热）需逐个查询详情，400 收藏约 15-20 分钟；缓存命中后秒回（cached 字段区分）。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -835,7 +835,7 @@ export const CUSTOM_TOOLS = [
   },
   {
     name: 'get_my_favorite_groups',
-    description: '[查询·收藏] 列出当前账号的世界收藏分组（收藏夹名）。',
+    description: '[查询·收藏] 列出当前账号的世界收藏分组（收藏夹名，含容量上限 capacity）。',
     inputSchema: { type: 'object', properties: {} },
   },
 ];

@@ -32,6 +32,8 @@ metadata:
 | `get_booth_item` | **BOOTH 单品详情**：按 itemId 查商品 → 名称/价格/描述/标签/图片/卖家/发布时间/收藏数/变体。**本地缓存**：`cached:true` 命中快照，`forceRefresh` 强制实时 |
 | `get_booth_history` | **BOOTH 查询历史**：本地缓存商品快照，按收藏数/更新时间排序 + `minWishlist` 趋势过滤 |
 | `get_booth_searches` | **BOOTH 搜索历史**：最近搜索词 + 结果 + 时间 |
+| `get_my_favorite_worlds` | **我的收藏世界**（2026-08-14 新增）：拉取全部收藏世界，按标签分类（🎮游戏/👻恐怖/🎵音乐体验/🌄风景观光/🧍Avatar模型/🍻社交聚会/😴休闲睡觉/📷拍照/其他），返回世界名/作者/收藏/浏览/简介/分类。**首次调用 15-20 分钟**（逐个查详情），缓存命中秒回（`cached` 字段）；配套 `favorites-pdf.py` 一键生成中文 PDF |
+| `get_my_favorite_groups` | **我的收藏分组**：世界收藏夹名 + 容量上限 `capacity` |
 | `backup_database` | 立即备份数据库（WAL 在线备份，保留最近 2 份到 backups/）；服务启动 + 每 24h 自动备份 |
 | `get_friend_events` | 某好友的事件历史（本地库） |
 | `get_recent_events` | 最新事件流 |

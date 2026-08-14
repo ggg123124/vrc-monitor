@@ -201,6 +201,8 @@ mcp_servers:
 | `get_booth_item` | **BOOTH 单品详情**：按 itemId 查商品 → 名称/价格/描述/标签/图片/卖家/发布时间/收藏数/变体。注：下载量/销量不公开。**本地缓存**：命中返回 `cached:true`（booth_items 快照），`forceRefresh:true` 强制实时 |
 | `get_booth_history` | **BOOTH 查询历史**（本地缓存）：已查过的商品快照，按收藏数/更新时间排序，`minWishlist` 过滤 → 趋势跟踪 |
 | `get_booth_searches` | **BOOTH 搜索历史**：最近搜索词 + 结果 id + 时间 |
+| `get_my_favorite_worlds` | **我的收藏世界**（2026-08-14 新增）：拉取账号全部收藏世界，按标签分类（🎮游戏/👻恐怖/🎵音乐体验/🌄风景观光/🧍Avatar模型/🍻社交聚会/😴休闲睡觉/📷拍照/其他），返回世界名/作者/收藏/浏览/简介/分类。**注意**：首次调用（无缓存预热）逐个查询详情，400 收藏约 15-20 分钟；缓存命中后秒回（`cached` 字段区分）。配套 `favorites-pdf.py` 可一键生成中文 PDF 手册 |
+| `get_my_favorite_groups` | **我的收藏分组**：列出世界收藏夹名（含容量上限 `capacity`） |
 
 ### 事件历史
 

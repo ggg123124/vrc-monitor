@@ -12,7 +12,7 @@ const PAGE = 100;
 
 /**
  * 分页拉取全部收藏的世界
- * @returns {Promise<Array<{favoriteId, worldId, favoriteGroupName, favoriteTags, createdAt}>>}
+ * @returns {Promise<Array<{favoriteId, worldId, favoriteGroupName, createdAt}>>}
  */
 async function fetchAllFavoriteWorlds(api, rateLimiter) {
   const all = [];
@@ -29,7 +29,6 @@ async function fetchAllFavoriteWorlds(api, rateLimiter) {
         // VRChat favorites API: favoriteId 是被收藏内容的 ID（world 类型为 wrld_）
         worldId: f.favoriteId || f.worldId || '',
         favoriteGroupName: f.favoriteGroupName || '',
-        favoriteTags: Array.isArray(f.tags) ? f.tags : [],
         createdAt: f.createdAt || '',
       });
     }
@@ -50,12 +49,13 @@ async function fetchWorldDetails(api, rateLimiter, storage, ids) {
   const map = new Map();
   const missing = [];
 
-  // 1) 本地缓存填充（world_cache 优先；site_world_recommendations 回退——旧版 favorite-cache 数据）
+  // 1) 本地缓存填充（world_cache 优先；site_world_recommendations 回退）
+  //    注：site_world_recommendations 为本地 site-worlds 功能（world_analytics，未入上游）的
+  //    收藏缓存表（source='favorite-cache'）；上游用户无此表时 try/catch 自动跳过，无影响。
   for (const id of ids) {
     try {
       let cached = storage.getWorldName(id);
       if (!cached) {
-        // 回退旧缓存表（存在时）
         try {
           const rows = storage._query(`SELECT * FROM site_world_recommendations WHERE world_id = $id`, { $id: id });
           if (rows.length > 0) {
@@ -82,10 +82,12 @@ async function fetchWorldDetails(api, rateLimiter, storage, ids) {
           description: (cached.description || '').slice(0, 500),
           imageUrl: cached.image_url || '',
           favorites: cached.favorites || 0,
-          visits: cached.visits || 0,
-          popularity: cached.popularity || 0,
+          // world_cache 无 visits/popularity 列 → null（区别于 API 实时值）
+          visits: typeof cached.visits === 'number' ? cached.visits : null,
+          popularity: typeof cached.popularity === 'number' ? cached.popularity : null,
           capacity: cached.capacity || 0,
           tags: (() => { try { return JSON.parse(cached.tags || '[]'); } catch { return []; } })(),
+          cached: true,
         });
       } else {
         missing.push(id);
@@ -99,7 +101,7 @@ async function fetchWorldDetails(api, rateLimiter, storage, ids) {
     try {
       const r = await rateLimiter.execute(() => api._request('GET', `/worlds/${encodeURIComponent(id)}`));
       if (r.status === 200 && r.data) {
-        map.set(id, r.data);
+        map.set(id, { ...r.data, cached: false });
         // 顺手写入本地缓存（world_cache 幂等 upsert + 旧缓存表回填），下次直接命中
         try {
           storage.upsertWorld({
@@ -114,7 +116,7 @@ async function fetchWorldDetails(api, rateLimiter, storage, ids) {
             favorites: r.data.favorites || 0,
             tags: JSON.stringify(Array.isArray(r.data.tags) ? r.data.tags : []),
           });
-          // 旧缓存表回填（若存在）
+          // 旧缓存表回填（若存在；来源见上方注释）
           try {
             storage._run(
               `INSERT INTO site_world_recommendations
@@ -145,15 +147,17 @@ async function fetchWorldDetails(api, rateLimiter, storage, ids) {
 }
 
 /** 世界标签 → 分类映射（优先级从高到低） */
+// 分类规则（与 favorites-pdf.py 消费端一致：PDF 复用本 handler 返回的 category，不重复实现）
+// 优先级从高到低：游戏/恐怖/音乐/风景 四大类在前
 const CATEGORY_RULES = [
-  { re: /avatar|アバター|model|展示|改模|店/i, cat: 'Avatar/模型' },
-  { re: /horror|怖|ホラー|backroom/i, cat: '恐怖' },
-  { re: /game|ゲーム|fps|racing|race|puzzle|謎解き|udon/i, cat: '游戏' },
-  { re: /music|音楽|dj|ライブ|concert|dance|舞/i, cat: '音乐/演出' },
-  { re: /social|hangout|集合|club|バー|居酒屋|cafe|カフェ/i, cat: '社交/聚会' },
-  { re: /photo|写真|撮影|カメラ/i, cat: '拍照' },
-  { re: /vrcsleep|睡眠|寝る|sleep|chill|チル|relax/i, cat: '休闲/睡觉' },
-  { re: /景観|景色|scenic|view|観光|landscape/i, cat: '风景/观光' },
+  { re: /game|ゲーム|fps|racing|race|puzzle|謎解き|udon|battle|対戦|action|アクション|card|カード|sports|スポーツ|tennis|テニス|golf|ボウリング|bowling|shooting|シューティング|mafia|人狼|quiz|クイズ|escape|脱出|parkour|パルクール|obstacle|アスレチック/i, cat: '🎮 游戏' },
+  { re: /horror|怖|ホラー|backroom|creepy|不気味|暗い|廃墟|abandoned|サイコ|psycho|呪い|curse|幽霊|ghost|心霊|怪異/i, cat: '👻 恐怖' },
+  { re: /music|音楽|dj|ライブ|concert|dance|舞|song|曲|piano|ピアノ|guitar|ギター|instrument|楽器|beat|ビート|k歌|卡拉ok|カラオケ|club|クラブ|party|パーティー|live|sound|サウンド|visualizer/i, cat: '🎵 音乐体验' },
+  { re: /景観|景色|scenic|view|観光|landscape|nature|自然|海|sea|ocean|空|sky|山|mountain|星|star|夜空|night sky|夕日|sunset|sunrise|桜|sakura|雪|snow|湖|lake|森|forest|wood|滝|waterfall|river|川|庭園|garden|park|公園|bridge|橋|街|city|town|urban|夜|night|雪景色|紅葉|autumn|花|flower|温泉|hot spring|島|island/i, cat: '🌄 风景/观光' },
+  { re: /avatar|アバター|model|展示|改模|店|shop|store|衣装|outfit|clothes|fashion|コスプレ|cosplay|mascot|マスコット|photo booth/i, cat: '🧍 Avatar/模型' },
+  { re: /social|hangout|集合|club|バー|居酒屋|cafe|カフェ|bar|飲み|drink|ラウンジ|lounge|plaza|広場|meet|交流|集会|nightclub/i, cat: '🍻 社交/聚会' },
+  { re: /vrcsleep|睡眠|寝る|sleep|chill|チル|relax|リラックス|heal|癒し|癒|comfy|居心地|cozy|まったり|のんびり|休憩|rest|nap|asmr|安眠|sleeping/i, cat: '😴 休闲/睡觉' },
+  { re: /photo|写真|撮影|カメラ|camera|photography|グラビア/i, cat: '📷 拍照' },
 ];
 
 function classify(world) {
@@ -194,12 +198,14 @@ export async function handleGetMyFavoriteWorlds({ limit = 500, sortBy = 'favorit
         description: (w.description || '').slice(0, 300),
         imageUrl: w.imageUrl || '',
         favorites: w.favorites || 0,
-        visits: w.visits || 0,
-        popularity: w.popularity || 0,
+        // 缓存命中时为 null（world_cache 无此列），API 实时查询为数值
+        visits: typeof w.visits === 'number' ? w.visits : null,
+        popularity: typeof w.popularity === 'number' ? w.popularity : null,
         capacity: w.capacity || 0,
         tags: Array.isArray(w.tags) ? w.tags : [],
         category: classify(w),
         favoriteGroup: f.favoriteGroupName || '',
+        cached: w.cached === true, // true=本地缓存命中, false=API 实时
       };
     });
 
@@ -242,7 +248,8 @@ export async function handleGetMyFavoriteGroups() {
     const groups = Array.isArray(r.data) ? r.data : [];
     const worldGroups = groups.filter(g => g.type === 'world').map(g => ({
       name: g.displayName || g.name || '',
-      count: g.visibility === 'private' ? null : (g?.capacity || 0),
+      // capacity 是分组容量上限（不是组内当前收藏数）
+      capacity: g.visibility === 'private' ? null : (g?.capacity || 0),
     }));
     return { ok: true, groups: worldGroups };
   } catch (e) {

@@ -1,0 +1,4 @@
+# favorites-pdf.py 依赖（收藏世界 PDF 生成器）
+# 安装: pip install -r requirements.txt
+Pillow>=10.0
+Markdown>=3.4
