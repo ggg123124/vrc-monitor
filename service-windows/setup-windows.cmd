@@ -24,7 +24,6 @@ if "%PYTHON%"=="" (
   exit /b 1
 )
 
-set "WATCHDOG=%PYTHON%" "%CD%\vrcmon_watchdog.py"
 echo [1/3] 创建 VrcMonWatchdog 计划任务（每 1 分钟崩溃自愈）...
 schtasks /create /tn "VrcMonWatchdog" /tr "\"%PYTHON%\" \"%CD%\vrcmon_watchdog.py\"" /sc minute /mo 1 /f
 
