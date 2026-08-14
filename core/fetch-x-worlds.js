@@ -226,6 +226,11 @@ export function parseRss(xml, screenName) {
         // 归一化：带 wrld_ 前缀的直接用；launch 里可能带或不带前缀
         const raw = x[1];
         return raw.startsWith('wrld_') ? raw : `wrld_${raw}`;
+      }).filter(id => {
+        // 过滤截断残片：RSS 链接显示文本可能被省略号截断（如 wrld_6…、wrld_d593cc64-de55-496c-9f83-）
+        // 合法 worldId = "wrld_" + 8-4-4-4-12 的 UUID（36 字符 + 5 前缀 = 41），残片长度不足直接丢弃
+        const hex = id.slice(5).replace(/-/g, '');
+        return /^[0-9a-f]{32}$/i.test(hex);
       })
     )];
 
@@ -284,7 +289,10 @@ function extractTag(xml, tag) {
 function stripHtml(s) {
   // 块级标签保留换行（<br>、</p>、</blockquote>、<hr>），其余标签清掉
   // <a href="..."> 保留完整 URL（显示文本可能被截断，如 vrchat.com/home/launch?world…）
+  // 先剥离 CDATA 标记（<![CDATA[ 无 > 会吞掉后续首个标签）
   return s
+    .replace(/<!\[CDATA\[/g, '')
+    .replace(/\]\]>/g, '')
     .replace(/<a\s+[^>]*href="([^"]+)"[^>]*>/gi, '$1 ')
     .replace(/<a\s+[^>]*href='([^']+)'[^>]*>/gi, '$1 ')
     .replace(/<br\s*\/?>/gi, '\n')
