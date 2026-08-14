@@ -821,4 +821,21 @@ export const CUSTOM_TOOLS = [
       },
     },
   },
+  // ── 我的收藏世界分析 ──
+  {
+    name: 'get_my_favorite_worlds',
+    description: '[查询·收藏] 拉取当前账号收藏的全部世界，按标签分类（Avatar/恐怖/游戏/音乐/社交/拍照/休闲/风景/其他），返回世界名/作者/收藏/浏览/简介/分类。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        limit: { type: 'number', description: '每类返回条数上限，默认 500' },
+        sortBy: { type: 'string', enum: ['favorites', 'visits', 'name'], description: '排序方式，默认 favorites' },
+      },
+    },
+  },
+  {
+    name: 'get_my_favorite_groups',
+    description: '[查询·收藏] 列出当前账号的世界收藏分组（收藏夹名）。',
+    inputSchema: { type: 'object', properties: {} },
+  },
 ];

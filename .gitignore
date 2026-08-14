@@ -35,3 +35,6 @@ backup/
 backups/
 *.sqlite3-wal
 *.sqlite3-shm
+
+# ── 收藏 PDF 生成缓存 ──
+img_cache/
