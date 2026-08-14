@@ -12,11 +12,91 @@
  */
 
 import { ctx, log } from './server-context.js';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 
-const NITTER_BASE = 'https://nitter.net';
+// Nitter 实例列表（按可达性排序，逐个尝试回退）
+const NITTER_INSTANCES = [
+  'https://nitter.net',
+  'https://nitter.poast.org',
+  'https://nitter.privacydev.net',
+  'https://nitter.tiekoetter.com',
+  'https://xcancel.com',
+  'https://nitter.1d4.us',
+];
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
-const NITTER_TIMEOUT_MS = 25000;
+const NITTER_TIMEOUT_MS = 12000;   // 单实例超时（短，便于快速回退）
+const NITTER_MIN_BYTES = 200;      // 空壳检测：响应体小于此字节视为不可用
 const MAX_TWEETS_PER_CREATOR = 20; // Nitter RSS 固定返回最近 ~20 条
+
+// 代理：复用 ws-manager.js 的 HttpsProxyAgent 方案（默认 127.0.0.1:7892，兼容 ws 代理）
+function resolveProxy() {
+  const env = process.env;
+  return env.VRC_MONITOR_HTTP_PROXY || env.HTTPS_PROXY || env.https_proxy
+    || env.HTTP_PROXY || env.http_proxy || 'http://127.0.0.1:7892';
+}
+
+function buildFetchOptions() {
+  const opts = {
+    headers: {
+      'User-Agent': UA,
+      'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+      'Accept-Encoding': 'gzip, deflate',
+    },
+    // 显式禁用压缩以规避空壳（部分实例对 gzip 返回 0 字节）
+    compress: false,
+  };
+  // 尝试走代理（与 ws-manager.js 一致）；若代理不可达则回退直连
+  try {
+    const proxy = resolveProxy();
+    if (proxy) opts.agent = new HttpsProxyAgent(proxy);
+  } catch { /* 代理构造失败则直连 */ }
+  return opts;
+}
+
+/**
+ * 抓取某博主的 Nitter RSS，返回推文数组：
+ * [{ id, url, time (ISO), text, worldIds: [], worldNames: [] }]
+ *
+ * 多实例回退：依次尝试 NITTER_INSTANCES，任一实例返回非空 RSS 即成功；
+ * 全部失败时返回结构化错误（含可达性诊断），不裸抛。
+ */
+export async function fetchCreatorRss(screenName) {
+  const errors = [];
+  for (const base of NITTER_INSTANCES) {
+    const url = `${base}/${encodeURIComponent(screenName)}/rss`;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), NITTER_TIMEOUT_MS);
+    try {
+      const resp = await fetch(url, { ...buildFetchOptions(), signal: ctrl.signal });
+      if (!resp.ok) {
+        errors.push(`${base} → HTTP ${resp.status}`);
+        clearTimeout(timer);
+        continue;
+      }
+      const xml = await resp.text();
+      clearTimeout(timer);
+      // 空壳检测：内容过短视为不可用（实测部分实例返回 200 但 0 字节）
+      if (!xml || xml.length < NITTER_MIN_BYTES || !xml.includes('<rss')) {
+        errors.push(`${base} → 空响应(${xml?.length || 0}B)`);
+        continue;
+      }
+      const tweets = parseRss(xml, screenName);
+      if (tweets.length === 0) {
+        errors.push(`${base} → RSS 无推文条目`);
+        continue;
+      }
+      return tweets; // 首个可用实例
+    } catch (e) {
+      clearTimeout(timer);
+      errors.push(`${base} → ${e.name === 'AbortError' ? '超时' : e.message.split('\n')[0]}`);
+    }
+  }
+  // 全部失败：结构化错误（供 handler 转成用户可读提示）
+  const err = new Error(`Nitter 全部实例不可达（@${screenName}）：${errors.join('；')}。可能需要代理（HTTPS_PROXY）或更换网络。`);
+  err.code = 'NITTER_UNREACHABLE';
+  err.details = errors;
+  throw err;
+}
 
 // ── 博主清单 ──────────────────────────────────────────────
 
@@ -63,37 +143,7 @@ export function removeCreator(storage, screenName) {
   return { removed: true, creators: next };
 }
 
-// ── Nitter RSS 抓取 ───────────────────────────────────────
-
-/**
- * 抓取某博主的 Nitter RSS，返回推文数组：
- * [{ id, url, time (ISO), text, worldIds: [], worldNames: [] }]
- */
-export async function fetchCreatorRss(screenName) {
-  const url = `${NITTER_BASE}/${encodeURIComponent(screenName)}/rss`;
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), NITTER_TIMEOUT_MS);
-  let resp;
-  try {
-    resp = await fetch(url, {
-      headers: {
-        'User-Agent': UA,
-        'Accept': 'application/rss+xml, application/xml, text/xml, */*',
-        'Accept-Encoding': 'gzip, deflate',
-      },
-      signal: ctrl.signal,
-    });
-  } catch (e) {
-    clearTimeout(timer);
-    throw new Error(`Nitter fetch failed for @${screenName}: ${e.message}`);
-  }
-  clearTimeout(timer);
-  if (!resp.ok) {
-    throw new Error(`Nitter HTTP ${resp.status} for @${screenName}`);
-  }
-  const xml = await resp.text();
-  return parseRss(xml, screenName);
-}
+// ── Nitter RSS 抓取（多实例回退 + 代理支持，见上方 fetchCreatorRss） ──
 
 /**
  * 解析 Nitter RSS XML → 推文数组
@@ -408,7 +458,11 @@ export async function scanCreatorWorlds({ force = false } = {}) {
       results.push({ screen_name: screen, name: creator.name || screen, tweets: tweets.length, worlds: saved });
     } catch (e) {
       log(`❌ x-world scan @${screen}: ${e.message}`);
-      results.push({ screen_name: screen, name: creator.name || screen, tweets: 0, worlds: 0, error: e.message });
+      // 结构化错误：Nitter 不可达 → 用户可读的降级提示
+      const errorInfo = e.code === 'NITTER_UNREACHABLE'
+        ? `Nitter 全部实例不可达（网络受限/需代理）。请在服务环境设置 HTTPS_PROXY 或 VRC_MONITOR_HTTP_PROXY 后重试。`
+        : e.message;
+      results.push({ screen_name: screen, name: creator.name || screen, tweets: 0, worlds: 0, error: errorInfo });
     }
   }
 

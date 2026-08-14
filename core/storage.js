@@ -1027,11 +1027,15 @@ export class Storage {
 
   insertXWorld({ worldId, worldName, authorName, description, imageUrl, favorites, visits, popularity, capacity, tags, firstSeenAt, lastRecommendedAt, creators, tweetCount }) {
     this._run(
-      `INSERT OR REPLACE INTO x_world_recommendations
+      `INSERT INTO x_world_recommendations
         (world_id, world_name, author_name, description, image_url, favorites, visits, popularity, capacity, tags,
          first_seen_at, last_recommended_at, creators, tweet_count)
        VALUES ($worldId, $worldName, $authorName, $description, $imageUrl, $favorites, $visits, $popularity, $capacity, $tags,
-         $firstSeenAt, $lastRecommendedAt, $creators, $tweetCount)`,
+         $firstSeenAt, $lastRecommendedAt, $creators, $tweetCount)
+       ON CONFLICT(world_id) DO UPDATE SET
+         world_name = $worldName, author_name = $authorName, description = $description, image_url = $imageUrl,
+         favorites = $favorites, visits = $visits, popularity = $popularity, capacity = $capacity, tags = $tags,
+         last_recommended_at = $lastRecommendedAt, tweet_count = $tweetCount`,
       {
         $worldId: worldId, $worldName: worldName || '', $authorName: authorName || '',
         $description: description || '', $imageUrl: imageUrl || '',
