@@ -38,6 +38,7 @@ import {
   handleGetFriendEvents,
   handleGetRecentEvents,
   handleGetWorldName,
+  handleGetWorldsByAuthor,
   handleSetWorldNote,
   handleGetWorldHistory,
   handleGetWeeklyReport,
@@ -283,6 +284,10 @@ export async function handleRpc(rpc, session, res) {
             break;
           case 'get_world_name':
             result = await rateLimiter.execute(() => handleGetWorldName(args));
+            break;
+          case 'get_worlds_by_author':
+            // 不包 rateLimiter：handler 内部对 /users、/worlds 分页已逐请求限流
+            result = await handleGetWorldsByAuthor(args);
             break;
           case 'set_world_note':
             result = handleSetWorldNote(args);

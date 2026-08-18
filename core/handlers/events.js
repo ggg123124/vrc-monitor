@@ -54,6 +54,7 @@ export async function handleGetWorldName({ worldId, forceRefresh }) {
   const result = {
     worldId: w.id,
     name: w.name,
+    authorId: w.authorId,
     authorName: w.authorName,
     capacity: w.capacity,
     occupants: w.occupants,
@@ -67,12 +68,79 @@ export async function handleGetWorldName({ worldId, forceRefresh }) {
   };
   // 写入缓存（不覆盖 note）
   storage.upsertWorld({
-    worldId: w.id, name: w.name, authorName: w.authorName,
+    worldId: w.id, name: w.name, authorId: w.authorId, authorName: w.authorName,
     capacity: w.capacity, favorites: w.favorites,
     releaseStatus: w.releaseStatus, tags: w.tags || [],
     description: w.description || '', imageUrl: w.imageUrl || '',
   });
   return result;
+}
+
+/**
+ * 通过作者 ID / 作者名列出该作者发布的全部世界。
+ * authorName 给定 → GET /users?search 精确匹配解析 userId；
+ * 然后用 GET /worlds?userId=<authorId>&n=100&offset=... 分页拉全。
+ */
+export async function handleGetWorldsByAuthor({ authorId, authorName, limit = 100 }) {
+  const { storage, api, rateLimiter } = ctx;
+  const cap = Math.min(Math.max(parseInt(limit, 10) || 100, 1), 500);
+  if (!authorId && !authorName) throw new Error('authorId or authorName is required');
+  if (authorId && authorName) throw new Error('authorId and authorName are mutually exclusive');
+
+  let resolvedAuthorId = authorId;
+  let resolvedAuthorName = authorName || '';
+  if (authorName) {
+    const target = authorName.trim();
+    const ur = await rateLimiter.execute(() => api._request('GET', `/users?search=${encodeURIComponent(target)}&n=10`));
+    if (ur.status !== 200 || !Array.isArray(ur.data) || ur.data.length === 0) {
+      throw new Error(`作者未找到: ${target}`);
+    }
+    const norm = s => (s || '').toLowerCase().replace(/\s+/g, '');
+    let user = ur.data.find(u => norm(u.displayName) === norm(target));
+    if (!user) user = ur.data[0];
+    if (!user?.id) throw new Error(`作者未找到: ${target}`);
+    resolvedAuthorId = user.id;
+    resolvedAuthorName = user.displayName || authorName;
+  }
+
+  const worlds = [];
+  let offset = 0;
+  while (worlds.length < cap) {
+    const n = Math.min(100, cap - worlds.length);
+    const r = await rateLimiter.execute(() => api._request('GET', `/worlds?userId=${encodeURIComponent(resolvedAuthorId)}&n=${n}&offset=${offset}`));
+    if (r.status !== 200 || !Array.isArray(r.data)) break;
+    if (r.data.length === 0) break;
+    for (const w of r.data) {
+      worlds.push({
+        worldId: w.id,
+        name: w.name,
+        authorId: w.authorId,
+        authorName: w.authorName,
+        description: (w.description || '').slice(0, 200),
+        imageUrl: w.imageUrl,
+        favorites: w.favorites || 0,
+        visits: w.visits || 0,
+        capacity: w.capacity || 0,
+        releaseStatus: w.releaseStatus,
+        tags: Array.isArray(w.tags) ? w.tags : [],
+        publishedAt: w.publicationDate || w.createdAt || null,
+      });
+      // 顺带写缓存（带 authorId，方便后续推荐/查询）
+      try {
+        storage.upsertWorld({
+          worldId: w.id, name: w.name, authorId: w.authorId, authorName: w.authorName,
+          capacity: w.capacity, favorites: w.favorites, releaseStatus: w.releaseStatus,
+          tags: Array.isArray(w.tags) ? w.tags : [], description: w.description || '', imageUrl: w.imageUrl || '',
+        });
+      } catch (_) {}
+      if (worlds.length >= cap) break;
+    }
+    if (r.data.length < n) break;
+    offset += r.data.length;
+  }
+
+  log(`🔍 get_worlds_by_author: ${resolvedAuthorName} (${resolvedAuthorId}) → ${worlds.length} 张图`);
+  return { authorId: resolvedAuthorId, authorName: resolvedAuthorName, total: worlds.length, worlds };
 }
 
 export function handleSetWorldNote({ worldId, note }) {

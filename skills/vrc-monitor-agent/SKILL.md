@@ -39,7 +39,8 @@ metadata:
 | `get_recent_events` | 最新事件流 |
 | `get_companions` | **同屏交叉查询**（指定时间窗口内同实例的好友；可查自己或任意好友） |
 | `get_online_pattern` | **上线规律分析**（上线/下线/活跃时段分布 + 活跃天数/频率 + 峰值建议） |
-| `get_world_name` | 世界信息查询（懒刷新：缓存命中直接返回，forceRefresh 才走 API；含作者/容量/简介/标签/用户备注 note） |
+| `get_world_name` | 世界信息查询（懒刷新：缓存命中直接返回，forceRefresh 才走 API；含作者ID/作者名/容量/简介/标签/用户备注 note） |
+| `get_worlds_by_author` | **按作者列出全部世界**：authorId 或 authorName（内部经 /users 解析）→ GET /worlds?userId= 分页拉全该作者发布的全部图（worldId/名称/收藏/浏览/容量/标签/发布时间），顺带写 world_cache（含 author_id）。配合 get_world_name 返回的 authorId 使用（如「当前所在图作者的全部图加权重」） |
 | `set_world_note` | 世界用户备注写入/更新（本地存储，API 刷新不覆盖；空串清除） |
 | `get_world_history` | 世界信息变更历史（name/description/author/image_url/release_status/capacity/tags 字段级记录） |
 | `get_weekly_report` | 一周游戏周报（活跃天数/时长/世界 Top/同屏伙伴带昵称/自己的上线规律/群组活动/圈内活动日历；days 默认 7） |

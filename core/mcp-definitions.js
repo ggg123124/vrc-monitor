@@ -322,6 +322,19 @@ export const CUSTOM_TOOLS = [
     },
   },
 {
+    name: 'get_worlds_by_author',
+    description: '[query] List all worlds published by a single author (通过作者 ID/作者名列出该作者的全部世界). Resolves authorId by authorName via /users?search when authorName given, then lists worlds via GET /worlds?userId=<authorId> with offset pagination until exhausted or limit reached.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        authorId: { type: 'string', description: 'Author user ID (usr_...). Mutually exclusive with authorName.' },
+        authorName: { type: 'string', description: 'Author display name — resolved to authorId via user search. Mutually exclusive with authorId.' },
+        limit: { type: 'number', default: 100, description: 'Max worlds to return (1-500, default 100)' },
+      },
+      required: [],
+    },
+  },
+{
     name: 'set_world_note',
     description: '[manage] Set or update a user note for a world (stored locally, never overwritten by API refresh). Empty string clears the note.',
     inputSchema: {
