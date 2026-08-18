@@ -9,6 +9,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import net from 'node:net';
 
 import { ctx, log, refreshWatchlistCache } from './core/server-context.js';
 import { CUSTOM_TOOLS } from './core/mcp-definitions.js';
@@ -102,6 +103,18 @@ async function _refreshOnlineState() {
   }
 }
 
+// ── 端口占用探测（net.connect 成功 = 已有进程监听）──
+function isPortBusy(port, timeoutMs = 800) {
+  return new Promise(resolve => {
+    const socket = net.connect({ host: '127.0.0.1', port }, () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.on('error', () => { socket.destroy(); resolve(false); });
+    socket.setTimeout(timeoutMs, () => { socket.destroy(); resolve(false); });
+  });
+}
+
 // ── 启动 ──
 
 async function main() {
@@ -113,6 +126,20 @@ async function main() {
   console.log('══════════════════════════════════════════════');
   console.log(`  VRChat-Assistant v${APP_VERSION}`);
   console.log('══════════════════════════════════════════════\n');
+
+  // 0. 端口预检：MCP 端口已被占用 → 立即退出（防双实例并存 → OTP 验证码互抢循环，issue #49）
+  //    必须前置：认证+OTP 抓取/WebSocket 在 main() 靠后位置，若等 listen 阶段才发现端口冲突，
+  //    第二个实例早已抢走/消费验证码，触发 VRChat 重复下发，造成邮箱验证码轰炸
+  if (await isPortBusy(PORT)) {
+    console.error('');
+    console.error(`❌ 端口 ${PORT} 已被占用，检测到监控服务可能已在运行`);
+    console.error('   为避免双实例并存互抢 OTP 验证码（造成邮箱验证码轰炸），本进程将退出。');
+    console.error('   请先确认旧实例状态并结束残留进程后重启：');
+    console.error('     Windows: netstat -ano | findstr 8799  或  tasklist | findstr node');
+    console.error('     Linux:   ss -ltnp | grep 8799         或  ps aux | grep start-monitor');
+    console.error('');
+    process.exit(1);
+  }
 
   ctx.serverState.started = new Date().toISOString();
 

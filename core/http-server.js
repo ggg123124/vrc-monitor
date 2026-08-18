@@ -134,10 +134,12 @@ export function createServer() {
     }
   });
 
-  // 端口冲突不直接 crash
+  // 端口冲突 → 立即退出（防双实例并存互抢 OTP 验证码，issue #49）
   server.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
       log(`❌ 端口 ${PORT} 已被占用，请检查是否有旧进程残留`);
+      log('   检测到监控服务可能已在运行，本进程立即退出，避免双实例并存互抢 OTP 验证码');
+      process.exit(1);
     } else {
       log(`❌ 服务器错误: ${err.message}`);
     }
