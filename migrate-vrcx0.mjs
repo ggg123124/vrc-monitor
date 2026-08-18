@@ -128,6 +128,7 @@ const stats = {
   feed_avatar: 0,
   feed_status: 0,
   feed_bio: 0,
+  gamelog_location: 0,
   memos: 0,
   friend_log_current: 0,
   cache_world: 0,
@@ -147,6 +148,14 @@ function worldIdFromLocation(location) {
   return idx > 0 ? location.slice(0, idx) : '';
 }
 
+// ── 用户前缀转标准 userId（补横线）──
+// VRCX 表名前缀是去掉横线的 userId（如 usr3a6252c9... → usr_3a6252c9-88e9-...）
+function userIdFromPrefix(prefix) {
+  const m = String(prefix).match(/^usr([0-9a-fA-F]{8})([0-9a-fA-F]{4})([0-9a-fA-F]{4})([0-9a-fA-F]{4})([0-9a-fA-F]{12})$/);
+  if (!m) return '';
+  return `usr_${m[1]}-${m[2]}-${m[3]}-${m[4]}-${m[5]}`;
+}
+
 // ── 幂等防重（Issue #13）──
 // events 表无主键/唯一约束，纯 INSERT 追加；重复执行迁移会全量重插历史。
 // 方案：迁移时把源记录 id 写入 content_json.vrcxId（带表前缀避免跨表 id 冲突），
@@ -157,6 +166,7 @@ const VRCX_ID_PREFIX = {
   feed_avatar: 'avatar',
   feed_status: 'status',
   feed_bio: 'bio',
+  gamelog_location: 'selfloc',
 };
 
 // 唯一索引：仅约束带 vrcxId 的迁移记录（实时采集数据无 vrcxId，不受影响）
@@ -443,6 +453,59 @@ async function main() {
   log(`   ✅ 迁移 ${count} 条位置变更`);
 
   // ═══════════════════════════════════════════
+  // 5.5 gamelog_location → events（用户自己的位置历史）
+  // ═══════════════════════════════════════════
+  // VRCX 的 gamelog_location 表记录的是本账号自己的位置历史（游戏日志解析），
+  // 事件类型 user-location，供 findCompanions 交叉匹配好友位置（查同屏）。
+  // 缺了这段迁移，get_companions 查自己只能看到迁移后实时采集的少量记录。
+  log('\n🐾 迁移自己的位置历史 (gamelog_location)...');
+  count = 0;
+  try {
+    const selfUserId = userIdFromPrefix(USER_PREFIX);
+    const rows = vrcx0.prepare(
+      `SELECT id, created_at, location, world_id, world_name, time, group_name
+       FROM gamelog_location ORDER BY created_at ASC`
+    ).all();
+    if (rows.length > 0 && selfUserId) {
+      const stmt = monitorDb.prepare(
+        `INSERT OR IGNORE INTO events (type, user_id, display_name, content_json, world_id, world_name, created_at, source)
+         VALUES ($type, $userId, $displayName, $contentJson, $worldId, $worldName, $createdAt, $source)`
+      );
+      const insertFn = (row) => {
+        const location = row.location || '';
+        const worldName = row.world_name || '';
+        const worldId = row.world_id || worldIdFromLocation(location);
+        stmt.run({
+          type: 'user-location',
+          userId: selfUserId,
+          displayName: '',
+          contentJson: JSON.stringify({
+            userId: selfUserId,
+            displayName: '',
+            location,
+            worldName,
+            time: row.time || 0,
+            groupName: row.group_name || '',
+            vrcxId: `${VRCX_ID_PREFIX.gamelog_location}:${row.id}`,
+          }),
+          worldId,
+          worldName,
+          createdAt: row.created_at || '',
+          source: 'migrate',
+        });
+      };
+      count = insertInBatches(monitorDb, rows, BATCH_SIZE, insertFn);
+      stats.gamelog_location = count;
+    } else if (!selfUserId) {
+      log(`   ⚠️ 无法从表前缀解析自己的 userId，跳过 gamelog_location 迁移`);
+    }
+  } catch (err) {
+    log(`   ⚠️ gamelog_location: ${err.message}`);
+  }
+  log(`   ✅ 迁移 ${count} 条自己的位置历史`);
+
+
+  // ═══════════════════════════════════════════
   // 6. feed_online_offline → events
   // ═══════════════════════════════════════════
   log('\n🔄 迁移上下线记录 (feed_online_offline)...');
@@ -665,6 +728,7 @@ async function main() {
   log('\n  备注迁移:');
   log(`  memos（好友昵称）            : ${stats.memos} 条`);
   log(`  cache_world（世界缓存）       : ${stats.cache_world} 个`);
+  log(`  gamelog_location（自己的位置） : ${stats.gamelog_location} 条`);
 
   log('\n✅ 数据迁移完成！');
   log(`   新数据库: ${MONITOR_DB}`);

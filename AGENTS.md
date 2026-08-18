@@ -35,6 +35,7 @@
 | 好友备注 | `memos` | 好友昵称/备注文本 |
 | 世界缓存 | `cache_world` | 世界 ID、名称、作者、缩略图等 |
 | 位置变更 | `feed_gps` | 好友何时在哪个世界 |
+| 自己的位置历史 | `gamelog_location` | 本账号自己的位置历史（VRCX 游戏日志解析），迁移为 `user-location` 事件，供 `get_companions` 交叉匹配好友位置查同屏 |
 | 上下线记录 | `feed_online_offline` | 好友上线/下线时间及位置 |
 | Avatar 变更 | `feed_avatar` | 好友更换 Avatar 记录 |
 | 状态变更 | `feed_status` | 好友状态文本变更 |
