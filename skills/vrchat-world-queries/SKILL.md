@@ -50,6 +50,16 @@ metadata:
 
 **作者维度**：作者画像按 `author_id` 聚合（个人偏好 > 圈层热度 > 纯热度，3:1:1 起步），⚠️ **必须用 author_id 匹配不用 author_name**（作者可改名）。
 
+### 按作者列出全部图（get_worlds_by_author）
+
+用户说「把这个作者的全部图找出来 / 全部加权重」时：
+
+1. `get_world_name {worldId, forceRefresh: true}` → 拿当前图 `authorId`（⚠️ 缓存命中的旧行可能无 authorId，用 forceRefresh 走 API 才拿全）
+2. `get_worlds_by_author {authorId}` → 列出该作者全部图（worldId/名称/收藏/浏览/容量/标签/发布时间，顺带写 world_cache 含 author_id）；也可直接传 `authorName` 内部经 `/users` 解析
+3. 批量操作：遍历 `worlds` 逐个 `rate_world {worldId, rating}` 加权重，或展示给用户选
+
+⚠️ 用 `authorId` 匹配不用 `author_name`（作者可改名）；`limit` 默认 100（「最多 100 张」，不是必然全量），作者图多时显式调大（上限 500）。
+
 ## 3. PlanetVRC 地图检索
 
 `search_planet_worlds` / `recommend_planet_worlds`：planetvrchat.net 日文世界目录，适合 VRChat API 搜不到的日文/小众图。
@@ -78,7 +88,7 @@ metadata:
 - **X 视频直链提取**：x.com 状态页 HTML 内嵌 JSON 里的 `video.twimg.com/.../*.mp4` 多分辨率直链，正则提取，代理下载
 - ⚠️ **用户偏好（通用建议）**：视频/实况素材**不要自己抽帧分析**，直接把视频文件发用户自己看；用户催"先给我链接"时，先发链接/文件再补文字分析
 - ⚠️ **世界 ID 反查坑**：用户说"昨天玩的那张图"，按名字 LIKE 会混入无关世界（名字含 Archive/Arch 的搜索工具图）——**先用 `note` 字段反查最可靠**（逛过的世界 note 里有正确 worldId）
-- **vrcmap 世界档案站**（`vrcmap.com/world/{worldId}`，代理可达）：世界简介 + 收藏/访问排名 + **作者全部作品列表**
+- **vrcmap 世界档案站**（`vrcmap.com/world/{worldId}`，代理可达）：世界简介 + 收藏/访问排名 + **作者全部作品列表**（⚠️ 现可直接用 `get_worlds_by_author` 拉作者全部作品，见 §2 作者维度）
 - **YouTube 实况搜索**：`youtube.com/results?search_query=<世界名+作者>` 提取 videoId；⚠️ 评论区可能关闭（yt-dlp 返回 0 条 ≠ 失败），别反复重试
 
 **X 搜索登录态（cookie→API 直连方案）**：

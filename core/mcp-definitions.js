@@ -323,7 +323,7 @@ export const CUSTOM_TOOLS = [
   },
 {
     name: 'get_worlds_by_author',
-    description: '[query] List all worlds published by a single author (通过作者 ID/作者名列出该作者的全部世界). Resolves authorId by authorName via /users?search when authorName given, then lists worlds via GET /worlds?userId=<authorId> with offset pagination until exhausted or limit reached.',
+    description: '[query] List worlds published by a single author, up to limit (default 100, max 500) — 通过作者 ID/作者名列出该作者的世界（最多 limit 张，默认 100，上限 500）. Resolves authorId by authorName via /users?search when authorName given, then lists worlds via GET /worlds?userId=<authorId> with offset pagination until exhausted or limit reached.',
     inputSchema: {
       type: 'object',
       properties: {

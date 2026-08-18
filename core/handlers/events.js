@@ -96,9 +96,8 @@ export async function handleGetWorldsByAuthor({ authorId, authorName, limit = 10
       throw new Error(`作者未找到: ${target}`);
     }
     const norm = s => (s || '').toLowerCase().replace(/\s+/g, '');
-    let user = ur.data.find(u => norm(u.displayName) === norm(target));
-    if (!user) user = ur.data[0];
-    if (!user?.id) throw new Error(`作者未找到: ${target}`);
+    const user = ur.data.find(u => norm(u.displayName) === norm(target));
+    if (!user?.id) throw new Error(`作者未找到(精确匹配): ${target}`);
     resolvedAuthorId = user.id;
     resolvedAuthorName = user.displayName || authorName;
   }
