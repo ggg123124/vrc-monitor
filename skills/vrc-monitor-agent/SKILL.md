@@ -97,6 +97,10 @@ metadata:
 | `x_remove_creator` | 移除追踪的 X 博主 |
 | `x_worlds` | 查看已收录的推荐世界列表（调试用） |
 | `submit_totp` | **提交 TOTP 验证码**：账号启用 Authenticator 两步验证（`/health` 的 `auth.needsTotp: true`）时，提交当前 6 位验证码完成登录（`code` 必填；登录后 WS 自动重连）。`needsTotp` 出现于：启动/重连需要 2FA 且邮箱 OTP 不可用，或**运行中 API 401 自动重登录需要 TOTP**（无需重启服务） |
+| `get_notifications` | **通知收件箱**（2026-08-19 新增）：读取当前账号未读通知（旧 v1 系统）。limit/offset 分页；types 过滤（friendRequest/invite/message/boop/requestInvite/votetokick/inviteResponse/requestInviteResponse）；hidden=true 查已隐藏。注意：API 的 type 查询参数已废弃不生效（本地过滤）；seen/receiverUserId 仅 WS 推送有，REST 不返回 |
+| `see_notification` / `hide_notification` | **通知已读/隐藏**：标记已读 PUT .../see；隐藏清除 PUT .../hide（旧 v1 hide 即删除）。notificationId 必填 |
+| `accept_friend_request` | **接受好友请求**（2026-08-19 新增）：PUT /auth/user/notifications/{id}/accept，**接受即直接加为好友**，不可逆，必须 confirm: true 才执行，否则只预览 |
+| `decline_friend_request` | **拒绝好友请求**（2026-08-19 新增）：旧 v1 无独立拒绝端点，hide 即清除该通知（对方不会收到明确拒绝提示），必须 confirm: true 才执行，否则只预览 |
 
 调用方式（HTTP SSE JSON-RPC）：
 
