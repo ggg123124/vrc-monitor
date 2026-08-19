@@ -97,6 +97,10 @@ metadata:
 | `x_remove_creator` | 移除追踪的 X 博主 |
 | `x_worlds` | 查看已收录的推荐世界列表（调试用） |
 | `submit_totp` | **提交 TOTP 验证码**：账号启用 Authenticator 两步验证（`/health` 的 `auth.needsTotp: true`）时，提交当前 6 位验证码完成登录（`code` 必填；登录后 WS 自动重连）。`needsTotp` 出现于：启动/重连需要 2FA 且邮箱 OTP 不可用，或**运行中 API 401 自动重登录需要 TOTP**（无需重启服务） |
+| `get_friend_favorite_groups` | **好友收藏分组列表**（2026-08-19 新增）：GET /favorite/groups?type=friend + /favorites?type=friend → 分组名/显示名/成员数。与 get_favorite_friends_locations 互补（后者看组内好友实时位置） |
+| `favorite_friend` | **添加好友到收藏分组**（2026-08-19 新增）：POST /favorites type=friend。userId/displayName 二选一；groupName 必填（显示名或分组名）；须已是好友（403 返回 not friends）；重复收藏返回 already favorited（不抛错）。写操作，confirm: true 才执行 |
+| `unfavorite_friend` | **从收藏分组移除好友**（2026-08-19 新增）：DELETE /favorites/{记录id}（先查记录 id 再删，可逆）。groupName 可选（省略=从全部分组移除）。写操作，confirm: true 才执行 |
+| `move_friend_group` | **移动好友到另一分组**（2026-08-19 新增）：删旧建新（API 无原地更新 tags 端点，与 VRCX 行为一致）。toGroup 必填。写操作，confirm: true 才执行 |
 
 调用方式（HTTP SSE JSON-RPC）：
 

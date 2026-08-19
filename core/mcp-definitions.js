@@ -899,4 +899,51 @@ export const CUSTOM_TOOLS = [
       required: ['code'],
     },
   },
+  // ── 好友收藏分组管理（2026-08-19 新增）──
+  {
+    name: 'get_friend_favorite_groups',
+    description: '[query·收藏] 列出好友收藏分组（分组名 + 显示名 + 成员数）。数据来自 GET /favorite/groups?type=friend + GET /favorites?type=friend。',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'favorite_friend',
+    description: '[write·收藏] 把好友加入收藏分组（POST /favorites type=friend）。groupId/displayName 二选一；groupName 必填（显示名或分组名，可用 get_friend_favorite_groups 查看）。须已是好友（403 返回 not friends）；重复收藏返回 already favorited（不抛错）。写操作，confirm: true 才执行。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        userId: { type: 'string', description: 'Friend user id (usr_...) — mutually exclusive with displayName' },
+        displayName: { type: 'string', description: 'Exact display name to search and favorite — mutually exclusive with userId' },
+        groupName: { type: 'string', description: 'Target favorite group name or displayName (required)' },
+        confirm: { type: 'boolean', description: 'Must be true to actually favorite. Default false returns preview only.' },
+      },
+      required: ['groupName'],
+    },
+  },
+  {
+    name: 'unfavorite_friend',
+    description: '[write·收藏] 从收藏分组移除好友（DELETE /favorites/{记录id}，可逆）。groupId/displayName 二选一；groupName 可选（省略 = 从全部分组移除）。写操作，confirm: true 才执行。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        userId: { type: 'string', description: 'Friend user id (usr_...) — mutually exclusive with displayName' },
+        displayName: { type: 'string', description: 'Exact display name to search and unfavorite — mutually exclusive with userId' },
+        groupName: { type: 'string', description: 'Favorite group to remove from (optional; omit = remove from all groups)' },
+        confirm: { type: 'boolean', description: 'Must be true to actually unfavorite. Default false returns preview only.' },
+      },
+    },
+  },
+  {
+    name: 'move_friend_group',
+    description: '[write·收藏] 移动好友到另一收藏分组（删旧建新，与 VRCX 行为一致；API 无原地更新 tags 端点）。groupId/displayName 二选一；toGroup 必填。写操作，confirm: true 才执行。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        userId: { type: 'string', description: 'Friend user id (usr_...) — mutually exclusive with displayName' },
+        displayName: { type: 'string', description: 'Exact display name to search and move — mutually exclusive with userId' },
+        toGroup: { type: 'string', description: 'Target favorite group name or displayName (required)' },
+        confirm: { type: 'boolean', description: 'Must be true to actually move. Default false returns preview only.' },
+      },
+      required: ['toGroup'],
+    },
+  },
 ];
