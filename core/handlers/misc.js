@@ -22,7 +22,9 @@ export function handleGetServerStatus() {
   return {
     status: 'running',
     startedAt: serverState.started,
-    authenticated: !!serverState.authUser,
+    // needsTotp 状态（运行期 401 需 TOTP）时账号并未真正登录，需报 authenticated:false（issue #59）
+    authenticated: !!serverState.authUser && !serverState.needsTotp,
+    needsTotp: serverState.needsTotp,
     user: serverState.authUser,
     dbEvents: storage.getStats().events,
     dbFriends: storage.getStats().friends,

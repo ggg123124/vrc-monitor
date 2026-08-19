@@ -62,7 +62,9 @@ async function handleRequest(req, res) {
     const uptime = serverState.started ? Math.floor((Date.now() - serverState.started) / 1000) : 0;
     const status = {
       ok: true,
-      auth: serverState.authUser
+      // needsTotp 状态下账号并未真正登录（运行期 401 需 TOTP），即使 authUser 仍保留上次缓存，
+      // 也必须报 authenticated:false 并暴露 needsTotp，避免 /health 误报已认证（issue #59）
+      auth: serverState.authUser && !serverState.needsTotp
         ? { authenticated: true, user: serverState.authUser }
         : { authenticated: false, needsOtp: serverState.needsOtp, needsTotp: serverState.needsTotp },
       db: storage.getStats(),
