@@ -3,6 +3,7 @@
  */
 
 import { ctx, log, parseLocation } from '../server-context.js';
+import { resolveWorldNames } from '../world-names.js';
 
 export async function handleGetOnlineFriends() {
   const { storage, api } = ctx;
@@ -24,36 +25,17 @@ export async function handleGetOnlineFriends() {
   const sessionStarts = storage.getOnlineSessionStarts(online.map(f => f.id));
   const nowMs = Date.now();
 
-  // 世界名：缓存优先，缺失批量 API 查询并写 world_cache
-  // （懒刷新节奏由 get_world_name 控制；rateLimiter 已在 RPC case 层包裹本 handler，
-  //   内部直接串行 api._request，与 get_weekly_report 同款模式——勿再套 rateLimiter.execute）
-  // ⚠️ 节流：高频工具，内部串行 API 查询加小 sleep 防突发 N 连发（PR #36 审核 W4）；
-  //   查询失败置 null（不泄漏 worldId 内部 ID，W2）；失败不写缓存 → 下次调用会重试（W3，已知行为）
-  const worldNameMap = {};
-  const missingWorlds = [];
+  // 世界名：统一走 resolveWorldNames（缓存 → 缺失批量 API → 写回 → 失败写进程内负缓存，
+  //   避免高频工具对同一失败 worldId 反复重试浪费配额；查询失败返回 null 不泄漏内部 ID）
+  const onlineWorldIds = [];
   for (const f of online) {
     const lp = parseLocation(f.location || 'private');
-    if (!lp.worldId) continue;
-    const cached = storage.getWorldName(lp.worldId);
-    if (cached && cached.name) worldNameMap[lp.worldId] = cached.name;
-    else missingWorlds.push(lp.worldId);
+    if (lp.worldId) onlineWorldIds.push(lp.worldId);
   }
-  for (const wid of missingWorlds) {
-    await new Promise(r => setTimeout(r, 300));  // 小 sleep 节流
-    try {
-      const wr = await api._request('GET', `/worlds/${wid}`);
-      if (wr.status === 200 && wr.data) {
-        const w = wr.data;
-        worldNameMap[wid] = w.name;
-        storage.upsertWorld({
-          worldId: w.id, name: w.name, authorName: w.authorName,
-          capacity: w.capacity, favorites: w.favorites,
-          releaseStatus: w.releaseStatus, tags: w.tags || [],
-          description: w.description || '', imageUrl: w.imageUrl || '',
-        });
-      } else worldNameMap[wid] = null;
-    } catch { worldNameMap[wid] = null; }
-  }
+  const nameMap = await resolveWorldNames(ctx, onlineWorldIds, {
+    throttleMs: 300,
+    onFail: () => null,
+  });
 
   return {
     online: online.length,
@@ -77,7 +59,7 @@ export async function handleGetOnlineFriends() {
           }
         } catch (e) { /* 解析失败视为未知 */ }
       }
-      const worldName = lp.worldId ? (worldNameMap[lp.worldId] || null) : null;
+      const worldName = lp.worldId ? (nameMap.get(lp.worldId) || null) : null;
       // 在线时长（本次会话）：sessionStart 有值 → onlineMinutes = now - sessionStart
       let onlineMinutes = null;
       let onlineSince = null;
