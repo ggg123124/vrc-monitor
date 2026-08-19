@@ -21,6 +21,22 @@ export async function handleGetFriendEvents({ userId, limit = 20, offset = 0, ty
   return { userId, total: events.length, events };
 }
 
+export function handleGetFriendPairMeetings({ userIdA, userIdB, startTime, endTime, days, windowMinutes }) {
+  const { storage } = ctx;
+  if (!userIdA || !userIdB) throw new Error('userIdA and userIdB are required');
+  if (userIdA === userIdB) throw new Error('userIdA and userIdB must be different');
+  let start, end;
+  if (startTime && endTime) {
+    start = startTime;
+    end = endTime;
+  } else {
+    const d = days || 30;
+    end = new Date().toISOString();
+    start = new Date(Date.now() - d * 86400000).toISOString();
+  }
+  return storage.findFriendPairMeetings(userIdA, userIdB, start, end, windowMinutes);
+}
+
 export function handleGetRecentEvents({ limit = 30, offset = 0, typeFilter, userIdFilter }) {
   const { storage } = ctx;
   let events;

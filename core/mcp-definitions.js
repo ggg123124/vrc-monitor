@@ -510,6 +510,22 @@ export const CUSTOM_TOOLS = [
     },
   },
 {
+    name: 'get_friend_pair_meeting',
+    description: '[query] 查询两个好友（任意第三方）之间「每次见面」的时段与时长（单次见面分析）。按实例切分：同一实例内所有同屏匹配事件合并为一次见面，返回每次的 start/end/durationMinutes、世界与实例；同时给出 meetingCount（见面次数）与 totalDurationSeconds（总时长）。精确口径：B 的每条可识别实例事件匹配 A 同一实例且时间差 ≤ windowMinutes → 计同屏；排除 offline/traveling/private（private 无房主信息无法判定同房）。startTime/endTime 与 days 二选一，windowMinutes 默认 30。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        userIdA: { type: 'string', description: '好友 A 的 userId（usr_...），必填' },
+        userIdB: { type: 'string', description: '好友 B 的 userId（usr_...），必填' },
+        startTime: { type: 'string', description: '起始时间（ISO 8601 UTC），与 endTime 成对' },
+        endTime: { type: 'string', description: '结束时间（ISO 8601 UTC），与 startTime 成对' },
+        days: { type: 'number', description: '回溯天数（默认 30），未给 startTime/endTime 时生效' },
+        windowMinutes: { type: 'number', description: '同屏判定时间窗口（分钟，默认 30）' },
+      },
+      required: ['userIdA', 'userIdB'],
+    },
+  },
+{
     name: 'get_online_pattern',
     description: '[query] Analyze a friend\'s online activity pattern (hourly distribution and frequency in Beijing time).',
     inputSchema: {
