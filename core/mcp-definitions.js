@@ -912,4 +912,64 @@ export const CUSTOM_TOOLS = [
       required: ['code'],
     },
   },
+  // ── 通知收件箱（2026-08-19 新增）──
+  {
+    name: 'get_notifications',
+    description: '[query·通知] 通知收件箱：读取当前账号的未读通知（旧 v1 系统）。limit(1-100)/offset 分页；types 逗号分隔过滤（friendRequest/invite/message/boop/requestInvite/votetokick/inviteResponse/requestInviteResponse）；hidden=true 查看已隐藏通知。注意：API 的 type 查询参数已废弃不生效，过滤在本地完成；seen/receiverUserId 仅 WebSocket 推送有，REST 不返回。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        limit: { type: 'number', default: 30, description: 'Max results (1-100, default 30)' },
+        offset: { type: 'number', default: 0 },
+        types: { type: 'string', description: 'Comma-separated types: friendRequest/invite/message/boop/requestInvite/votetokick (default all)' },
+        hidden: { type: 'boolean', default: false, description: 'List hidden notifications instead of active ones' },
+      },
+    },
+  },
+  {
+    name: 'see_notification',
+    description: '[write·通知] 标记通知为已读。notificationId 必填。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        notificationId: { type: 'string', description: 'Notification ID (not_... / frq_...)' },
+      },
+      required: ['notificationId'],
+    },
+  },
+  {
+    name: 'hide_notification',
+    description: '[write·通知] 隐藏/清除一条通知（旧 v1 系统 hide 即删除）。notificationId 必填。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        notificationId: { type: 'string', description: 'Notification ID (not_... / frq_...)' },
+      },
+      required: ['notificationId'],
+    },
+  },
+  {
+    name: 'accept_friend_request',
+    description: '[write·社交] 接受好友请求（PUT /auth/user/notifications/{id}/accept）——接受即直接加为好友，不可逆，必须传 confirm: true 才执行，否则只返回预览。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        notificationId: { type: 'string', description: 'Friend request notification ID (frq_...)' },
+        confirm: { type: 'boolean', description: 'Must be true to actually accept (adds the user as friend). Default false returns preview only.' },
+      },
+      required: ['notificationId'],
+    },
+  },
+  {
+    name: 'decline_friend_request',
+    description: '[write·社交] 拒绝好友请求（旧 v1 无独立拒绝端点，hide 即清除该通知）。对方不会收到明确拒绝提示，必须传 confirm: true 才执行，否则只返回预览。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        notificationId: { type: 'string', description: 'Friend request notification ID (frq_...)' },
+        confirm: { type: 'boolean', description: 'Must be true to actually decline (clears the notification). Default false returns preview only.' },
+      },
+      required: ['notificationId'],
+    },
+  },
 ];
