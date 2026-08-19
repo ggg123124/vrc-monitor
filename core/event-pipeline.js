@@ -158,11 +158,84 @@ export class EventPipeline {
     const userId = event.userId;
     const displayName = event.displayName;
 
-    this.storage.upsertFriend({
-      userId,
-      displayName,
-      lastSeen: event.receivedAt,
-    });
+    // 好友资料变更追踪（2026-08-19）：friend-update 推送完整 user 对象
+    // （currentAvatarImageUrl/bio/statusDescription/userIcon/pronouns 等），
+    // 与 friends 表当前快照 diff，变化写入 events（type 与 VRCX 迁移脚本一致：
+    // 顶层 friend-update + content_json.type=avatar/status/bio/user_icon/pronouns）。
+    // 无历史快照（首次采集）或字段无基线值时只初始化，不误报变更。
+    const userObj = event.content && event.content.user ? event.content.user : null;
+    if (userObj) {
+      const prev = this.storage.getFriend(userId);
+      if (prev && prev.user_id) {
+        const changes = [];
+        const avatarChanged = prev.avatar_image_url
+          && (prev.avatar_image_url || '') !== (userObj.currentAvatarImageUrl || '');
+        if (avatarChanged) {
+          changes.push({ type: 'avatar', payload: {
+            avatarName: userObj.currentAvatarName || '',
+            avatarImageUrl: userObj.currentAvatarImageUrl || '',
+            avatarThumbnailUrl: userObj.currentAvatarThumbnailImageUrl || '',
+            previousAvatarImageUrl: prev.avatar_image_url || '',
+            previousAvatarThumbnailUrl: prev.avatar_image_url || '',
+          }});
+        }
+        const bioChanged = prev.bio
+          && (prev.bio || '') !== (userObj.bio || '');
+        if (bioChanged) {
+          changes.push({ type: 'bio', payload: { bio: userObj.bio || '', previousBio: prev.bio || '' } });
+        }
+        const statusChanged = (prev.status && (prev.status || '') !== (userObj.status || ''))
+          || (prev.status_description && (prev.status_description || '') !== (userObj.statusDescription || ''));
+        if (statusChanged) {
+          changes.push({ type: 'status', payload: {
+            status: userObj.status || '',
+            statusDescription: userObj.statusDescription || '',
+            previousStatus: prev.status || '',
+            previousStatusDescription: prev.status_description || '',
+          }});
+        }
+        const iconChanged = prev.user_icon
+          && (prev.user_icon || '') !== (userObj.userIcon || '');
+        if (iconChanged) {
+          changes.push({ type: 'user_icon', payload: { userIcon: userObj.userIcon || '', previousUserIcon: prev.user_icon || '' } });
+        }
+        const pronounsChanged = prev.pronouns
+          && (prev.pronouns || '') !== (userObj.pronouns || '');
+        if (pronounsChanged) {
+          changes.push({ type: 'pronouns', payload: { pronouns: userObj.pronouns || '', previousPronouns: prev.pronouns || '' } });
+        }
+        for (const c of changes) {
+          this.storage.insertEvent({
+            type: 'friend-update',
+            userId,
+            displayName,
+            contentJson: { userId, displayName, type: c.type, ...c.payload },
+            worldId: '',
+            worldName: '',
+            createdAt: event.receivedAt,
+            source: 'websocket',
+          });
+        }
+      }
+
+      this.storage.upsertFriend({
+        userId,
+        displayName,
+        status: userObj.status || '',
+        statusDescription: userObj.statusDescription || '',
+        avatarImageUrl: userObj.currentAvatarImageUrl || '',
+        bio: userObj.bio || '',
+        userIcon: userObj.userIcon || '',
+        pronouns: userObj.pronouns || '',
+        lastSeen: event.receivedAt,
+      });
+    } else {
+      this.storage.upsertFriend({
+        userId,
+        displayName,
+        lastSeen: event.receivedAt,
+      });
+    }
 
     this._storeEvent(event);
   }

@@ -102,6 +102,17 @@ export class Storage {
     }
     // 迁移：历史 tags='' 脏数据统一为 '[]'（json_each 对空串抛 malformed JSON，Review R2）
     this._run(`UPDATE world_kb SET tags = '[]' WHERE tags IS NULL OR tags = ''`);
+    // 迁移：旧库 friends 缺 bio/user_icon/pronouns 列（friend-profile 变更追踪用，幂等）
+    const friendCols = this._query(`PRAGMA table_info(friends)`);
+    if (!friendCols.some(c => c.name === 'bio')) {
+      this._run(`ALTER TABLE friends ADD COLUMN bio TEXT`);
+    }
+    if (!friendCols.some(c => c.name === 'user_icon')) {
+      this._run(`ALTER TABLE friends ADD COLUMN user_icon TEXT`);
+    }
+    if (!friendCols.some(c => c.name === 'pronouns')) {
+      this._run(`ALTER TABLE friends ADD COLUMN pronouns TEXT`);
+    }
     return this;
   }
 
@@ -266,6 +277,9 @@ export class Storage {
       $status: friend.status || '',
       $statusDescription: friend.statusDescription || '',
       $avatarImageUrl: friend.avatarImageUrl || '',
+      $bio: friend.bio || '',
+      $userIcon: friend.userIcon || '',
+      $pronouns: friend.pronouns || '',
       $lastSeen: friend.lastSeen || '',
       $lastOnline: friend.lastOnline || '',
       $lastOffline: friend.lastOffline || '',
@@ -274,9 +288,11 @@ export class Storage {
     this._run(
       `INSERT INTO friends (user_id, display_name, memo, trust_level, is_online, location,
         world_id, world_name, platform, status, status_description, avatar_image_url,
+        bio, user_icon, pronouns,
         last_seen, last_online, last_offline)
        VALUES ($userId, $displayName, $memo, $trustLevel, $isOnline, $location,
         $worldId, $worldName, $platform, $status, $statusDescription, $avatarImageUrl,
+        $bio, $userIcon, $pronouns,
         $lastSeen, $lastOnline, $lastOffline)
        ON CONFLICT(user_id) DO UPDATE SET
         display_name=COALESCE($displayName, display_name),
@@ -290,6 +306,9 @@ export class Storage {
         status=COALESCE($status, status),
         status_description=COALESCE($statusDescription, status_description),
         avatar_image_url=COALESCE($avatarImageUrl, avatar_image_url),
+        bio=COALESCE($bio, bio),
+        user_icon=COALESCE($userIcon, user_icon),
+        pronouns=COALESCE($pronouns, pronouns),
         last_seen=COALESCE($lastSeen, last_seen),
         last_online=COALESCE($lastOnline, last_online),
         last_offline=COALESCE($lastOffline, last_offline),
@@ -309,6 +328,41 @@ export class Storage {
   getFriend(userId) {
     const rows = this._query(`SELECT * FROM friends WHERE user_id = $userId`, { $userId: userId });
     return rows[0] || null;
+  }
+
+  // 好友资料变更历史（friend-profile 变更追踪，2026-08-19 新增）
+  // 查询 events 表中 content_json.type 为 avatar/status/bio/user_icon/pronouns 的记录。
+  // 与 VRCX 迁移脚本（feed_avatar/feed_status/feed_bio）写入格式一致：顶层 type='friend-update'，
+  // 实际变更类型在 content_json.type 里。types 参数逗号分隔过滤（默认全部）。
+  getFriendProfileChanges(userId, { limit = 50, offset = 0, types } = {}) {
+    const validTypes = ['avatar', 'status', 'bio', 'user_icon', 'pronouns'];
+    let typesArr = validTypes;
+    if (types) {
+      typesArr = String(types).split(',').map(t => t.trim()).filter(t => validTypes.includes(t));
+      if (typesArr.length === 0) typesArr = validTypes;
+    }
+    const params = { $limit: limit, $offset: offset };
+    const placeholders = typesArr.map((t, i) => { params[`$t${i}`] = t; return `$t${i}`; }).join(',');
+    let sql = `SELECT * FROM events WHERE type = 'friend-update'
+               AND json_extract(content_json, '$.type') IN (${placeholders})`;
+    if (userId) { sql += ` AND user_id = $userId`; params.$userId = userId; }
+    sql += ` ORDER BY created_at DESC LIMIT $limit OFFSET $offset`;
+    return this._query(sql, params);
+  }
+
+  getFriendProfileChangeCount(userId, { types } = {}) {
+    const validTypes = ['avatar', 'status', 'bio', 'user_icon', 'pronouns'];
+    let typesArr = validTypes;
+    if (types) {
+      typesArr = String(types).split(',').map(t => t.trim()).filter(t => validTypes.includes(t));
+      if (typesArr.length === 0) typesArr = validTypes;
+    }
+    const params = {};
+    const placeholders = typesArr.map((t, i) => { params[`$t${i}`] = t; return `$t${i}`; }).join(',');
+    let sql = `SELECT COUNT(*) n FROM events WHERE type = 'friend-update'
+               AND json_extract(content_json, '$.type') IN (${placeholders})`;
+    if (userId) { sql += ` AND user_id = $userId`; params.$userId = userId; }
+    return this._query(sql, params)[0].n;
   }
 
   searchFriends(query) {

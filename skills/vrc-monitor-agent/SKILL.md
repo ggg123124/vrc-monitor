@@ -97,6 +97,7 @@ metadata:
 | `x_remove_creator` | 移除追踪的 X 博主 |
 | `x_worlds` | 查看已收录的推荐世界列表（调试用） |
 | `submit_totp` | **提交 TOTP 验证码**：账号启用 Authenticator 两步验证（`/health` 的 `auth.needsTotp: true`）时，提交当前 6 位验证码完成登录（`code` 必填；登录后 WS 自动重连）。`needsTotp` 出现于：启动/重连需要 2FA 且邮箱 OTP 不可用，或**运行中 API 401 自动重登录需要 TOTP**（无需重启服务） |
+| `get_friend_profile_changes` | **好友资料变更历史**（2026-08-19 新增）：Avatar/Bio/状态/头像图标/代词变更记录。事件管道实时采集 friend-update 的 user 对象 diff 落库，与 VRCX 迁移数据（feed_avatar/feed_status/feed_bio）同 type 打通。userId 可选（省略=全部好友）；types 逗号分隔过滤（avatar/status/bio/user_icon/pronouns）；limit(1-200)/offset 分页。每次变更返回 change 含当前值+旧值 |
 
 调用方式（HTTP SSE JSON-RPC）：
 

@@ -37,6 +37,7 @@ import {
 import {
   handleGetFriendEvents,
   handleGetRecentEvents,
+  handleGetFriendProfileChanges,
   handleGetWorldName,
   handleGetWorldsByAuthor,
   handleSetWorldNote,
@@ -281,6 +282,9 @@ export async function handleRpc(rpc, session, res) {
             break;
           case 'get_recent_events':
             result = handleGetRecentEvents(args);
+            break;
+          case 'get_friend_profile_changes':
+            result = handleGetFriendProfileChanges(args);
             break;
           case 'get_world_name':
             result = await rateLimiter.execute(() => handleGetWorldName(args));

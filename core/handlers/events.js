@@ -157,6 +157,39 @@ export function handleGetWorldHistory({ worldId, limit = 50 }) {
   return { worldId, history: storage.getWorldHistory(worldId, limit) };
 }
 
+// 好友资料变更历史（2026-08-19 新增，配合事件管道 friend-profile 变更追踪）。
+// 查询 events 表中 content_json.type ∈ {avatar,status,bio,user_icon,pronouns} 的记录。
+// userId 可选（省略 = 全部好友），types 逗号分隔过滤，limit/offset 分页。
+export function handleGetFriendProfileChanges({ userId, limit = 50, offset = 0, types }) {
+  const { storage } = ctx;
+  const cap = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
+  const off = Math.max(parseInt(offset, 10) || 0, 0);
+  const rows = storage.getFriendProfileChanges(userId || '', { limit: cap, offset: off, types });
+  const total = storage.getFriendProfileChangeCount(userId || '', { types });
+  const changes = rows.map(r => {
+    let c = {};
+    try { c = JSON.parse(r.content_json); } catch {}
+    const payload = { ...c };
+    delete payload.userId; delete payload.displayName; delete payload.type; delete payload.vrcxId;
+    return {
+      userId: r.user_id,
+      displayName: r.display_name,
+      changeType: c.type,
+      source: r.source,
+      createdAt: r.created_at,
+      change: payload,
+    };
+  });
+  return {
+    userId: userId || null,
+    types: types ? String(types).split(',').map(t => t.trim()) : null,
+    total,
+    limit: cap,
+    offset: off,
+    changes,
+  };
+}
+
 export async function handleGetWeeklyReport({ days = 7 }) {
   const { storage, api, serverState } = ctx;
   if (!days || days < 1 || days > 90) days = 7;

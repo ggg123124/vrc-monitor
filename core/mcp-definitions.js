@@ -310,6 +310,19 @@ export const CUSTOM_TOOLS = [
     },
   },
 {
+    name: 'get_friend_profile_changes',
+    description: '[query·资料] 好友资料变更历史（Avatar/Bio/状态/头像图标/代词）：事件管道实时采集 friend-update 的 user 对象 diff 落库，与 VRCX 迁移的 feed_avatar/feed_status/feed_bio 同 type 打通。userId 可选（省略=全部好友）；types 逗号分隔过滤（avatar/status/bio/user_icon/pronouns，默认全部）；limit(1-200)/offset 分页。返回每条 { userId, displayName, changeType, source, createdAt, change:{当前值, 旧值} }。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        userId: { type: 'string', description: 'Friend ID (usr_...). Omit to query all friends' },
+        limit: { type: 'number', default: 50, description: 'Max rows (1-200, default 50)' },
+        offset: { type: 'number', default: 0 },
+        types: { type: 'string', description: 'Comma-separated change types: avatar/status/bio/user_icon/pronouns (default all)' },
+      },
+    },
+  },
+{
     name: 'get_world_name',
     description: '[query] Get world name by worldId. Checks local cache first, falls back to API.',
     inputSchema: {
