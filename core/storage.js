@@ -860,7 +860,7 @@ export class Storage {
 
   // ── 新增：查找同屏好友 ──
 
-  findCompanions(userId, startTime, endTime) {
+  findCompanions(userId, startTime, endTime, includeTimeline = false) {
     // 1. 获取目标用户的时间范围内所有 location 事件
     //    - 查自己：user-location（自己的位置事件）
     //    - 查好友：friend-location（好友的位置事件）
@@ -872,8 +872,10 @@ export class Storage {
     );
 
     // 2. 提取用户去过的所有 unique instanceId
+    //    默认不组装 userTimeline（全量位置事件可能数百上千条，导致 MCP 输出过大被截断），
+    //    仅在 includeTimeline=true 时才收集，满足需要逐条查看位置明细的场景。
     const userInstances = new Set();
-    const userTimeline = [];
+    const userTimeline = includeTimeline ? [] : null;
     for (const ev of userEvents) {
       let location = '';
       try {
@@ -888,16 +890,18 @@ export class Storage {
           userInstances.add(instanceId);
           userInstances.add(`${worldId}:${instanceId}`);
         }
-        userTimeline.push({
-          id: ev.id,
-          created_at: ev.created_at,
-          type: ev.type,
-          world_id: worldId,
-          instance_id: instanceId,
-          world_name: ev.world_name || '',
-          content_json: ev.content_json,
-        });
-      } else {
+        if (includeTimeline) {
+          userTimeline.push({
+            id: ev.id,
+            created_at: ev.created_at,
+            type: ev.type,
+            world_id: worldId,
+            instance_id: instanceId,
+            world_name: ev.world_name || '',
+            content_json: ev.content_json,
+          });
+        }
+      } else if (includeTimeline) {
         userTimeline.push({
           id: ev.id,
           created_at: ev.created_at,
@@ -973,7 +977,7 @@ export class Storage {
       userId,
       timeRange: { start: startTime, end: endTime },
       userInstanceCount: userInstances.size,
-      userTimeline,
+      userTimeline: userTimeline || [],
       companionCount: companions.length,
       companions,
     };

@@ -498,13 +498,14 @@ export const CUSTOM_TOOLS = [
   },
 {
     name: 'get_companions',
-    description: '[query] Find all friends who were in the same instances as you during a time range. Uses SQLite cross-reference by instanceId. Each companion has: userId/displayName/firstSeen/lastSeen/matchCount/worlds (worlds is a STRING array of world names or worldIds, NOT objects).',
+    description: '[query] Find all friends who were in the same instances as you during a time range. Uses SQLite cross-reference by instanceId. Each companion has: userId/displayName/firstSeen/lastSeen/matchCount/worlds (worlds is a STRING array of world names or worldIds, NOT objects). By default userTimeline is omitted (empty array) to avoid huge MCP output when the range spans many location events; pass includeTimeline=true to include the full per-event location timeline.',
     inputSchema: {
       type: 'object',
       properties: {
         startTime: { type: 'string', description: 'Start time (ISO 8601, UTC recommended, e.g. 2026-07-25T11:00:00Z)' },
         endTime: { type: 'string', description: 'End time (ISO 8601, UTC)' },
         userId: { type: 'string', description: 'Optional: override userId. Defaults to current user.' },
+        includeTimeline: { type: 'boolean', description: 'Optional: include the full user location timeline (default false to avoid oversized output).' },
       },
       required: ['startTime', 'endTime'],
     },

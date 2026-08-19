@@ -37,7 +37,7 @@ metadata:
 | `backup_database` | 立即备份数据库（WAL 在线备份，保留最近 2 份到 backups/）；服务启动 + 每 24h 自动备份 |
 | `get_friend_events` | 某好友的事件历史（本地库） |
 | `get_recent_events` | 最新事件流 |
-| `get_companions` | **同屏交叉查询**（指定时间窗口内同实例的好友；可查自己或任意好友） |
+| `get_companions` | **同屏交叉查询**（指定时间窗口内同实例的好友；可查自己或任意好友）。**默认不返回 userTimeline**（位置事件多时输出会过大被截断），仅返回 companions 汇总；需逐条位置明细时传 `includeTimeline=true` |
 | `get_friend_pair_meeting` | **好友对单次见面分析**（查任意两个好友之间「每次见面」的时段与时长；按实例切分，同一实例内同屏匹配合并为一次见面，返回每次 start/end/durationMinutes/世界/实例 + meetingCount + totalDurationSeconds；口径：同实例且时间差 ≤ windowMinutes（默认30），排除 private/offline/traveling；startTime/endTime 与 days 二选一） |
 | `get_friend_pair_screen` | **好友对同屏次数与时长**（查任意两个好友之间的共玩/同房统计；精确口径：B 的每条可识别实例事件匹配 A 同一实例且时间差 ≤ windowMinutes（默认30）→ 计同屏；排除 private/offline/traveling，不同时间去过同一房不计；返回 matchCount（次数）、totalMinutes/totalSeconds（总时长，段首到段尾累加）、worldDuration（按世界拆分时长）、worlds（共现世界）、matches；startTime/endTime 与 days 二选一） |
 | `get_online_pattern` | **上线规律分析**（上线/下线/活跃时段分布 + 活跃天数/频率 + 峰值建议） |
