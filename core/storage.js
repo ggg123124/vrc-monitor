@@ -264,54 +264,67 @@ export class Storage {
   // ── 好友状态 ──
 
   upsertFriend(friend) {
-    const params = {
-      $userId: friend.userId,
-      $displayName: friend.displayName || '',
-      $memo: friend.memo ?? null,
-      $trustLevel: friend.trustLevel ?? null,
-      $isOnline: friend.isOnline ? 1 : 0,
-      $location: friend.location || '',
-      $worldId: friend.worldId || '',
-      $worldName: friend.worldName || '',
-      $platform: friend.platform || '',
-      $status: friend.status || '',
-      $statusDescription: friend.statusDescription || '',
-      $avatarImageUrl: friend.avatarImageUrl || '',
-      $bio: friend.bio || '',
-      $userIcon: friend.userIcon || '',
-      $pronouns: friend.pronouns || '',
-      $lastSeen: friend.lastSeen || '',
-      $lastOnline: friend.lastOnline || '',
-      $lastOffline: friend.lastOffline || '',
+    const userId = friend.userId;
+    // 只更新显式传入的字段：partial upsert（如 friend-location/friend-active 事件只带少数字段）
+    // 不得覆盖未传的 profile 字段。历史 bug（PR #56 审查实测复现）：location 事件穿插会
+    // 把 bio/status/avatar_image_url 等用 '' 覆盖，导致资料变更追踪基线被清空、main 上
+    // status/avatar 数据同源丢失。故按 key 存在性动态构建 SET 子句。
+    const columns = {
+      display_name: 'displayName',
+      memo: 'memo',
+      trust_level: 'trustLevel',
+      is_online: 'isOnline',
+      location: 'location',
+      world_id: 'worldId',
+      world_name: 'worldName',
+      platform: 'platform',
+      status: 'status',
+      status_description: 'statusDescription',
+      avatar_image_url: 'avatarImageUrl',
+      bio: 'bio',
+      user_icon: 'userIcon',
+      pronouns: 'pronouns',
+      last_seen: 'lastSeen',
+      last_online: 'lastOnline',
+      last_offline: 'lastOffline',
+    };
+    const norm = {
+      displayName: v => v || '',
+      memo: v => v ?? null,
+      trustLevel: v => v ?? null,
+      isOnline: v => v ? 1 : 0,
+      location: v => v || '',
+      worldId: v => v || '',
+      worldName: v => v || '',
+      platform: v => v || '',
+      status: v => v || '',
+      statusDescription: v => v || '',
+      avatarImageUrl: v => v || '',
+      bio: v => v || '',
+      userIcon: v => v || '',
+      pronouns: v => v || '',
+      lastSeen: v => v || '',
+      lastOnline: v => v || '',
+      lastOffline: v => v || '',
     };
 
+    const setCols = [];
+    const params = { $userId: userId };
+    for (const [col, key] of Object.entries(columns)) {
+      if (friend[key] === undefined) continue;  // 未传 → 不更新该列
+      params[`$${col}`] = norm[key](friend[key]);
+      setCols.push(`${col}=COALESCE($${col}, ${col})`);
+    }
+    if (setCols.length === 0) return;
+
+    const insCols = ['user_id', ...Object.keys(columns).filter(c => friend[columns[c]] !== undefined)];
+    const insPh = insCols.map(c => c === 'user_id' ? '$userId' : `$${c}`);
+
     this._run(
-      `INSERT INTO friends (user_id, display_name, memo, trust_level, is_online, location,
-        world_id, world_name, platform, status, status_description, avatar_image_url,
-        bio, user_icon, pronouns,
-        last_seen, last_online, last_offline)
-       VALUES ($userId, $displayName, $memo, $trustLevel, $isOnline, $location,
-        $worldId, $worldName, $platform, $status, $statusDescription, $avatarImageUrl,
-        $bio, $userIcon, $pronouns,
-        $lastSeen, $lastOnline, $lastOffline)
+      `INSERT INTO friends (${insCols.join(', ')})
+       VALUES (${insPh.join(', ')})
        ON CONFLICT(user_id) DO UPDATE SET
-        display_name=COALESCE($displayName, display_name),
-        memo=COALESCE($memo, memo),
-        trust_level=COALESCE($trustLevel, trust_level),
-        is_online=COALESCE($isOnline, is_online),
-        location=COALESCE($location, location),
-        world_id=COALESCE($worldId, world_id),
-        world_name=COALESCE($worldName, world_name),
-        platform=COALESCE($platform, platform),
-        status=COALESCE($status, status),
-        status_description=COALESCE($statusDescription, status_description),
-        avatar_image_url=COALESCE($avatarImageUrl, avatar_image_url),
-        bio=COALESCE($bio, bio),
-        user_icon=COALESCE($userIcon, user_icon),
-        pronouns=COALESCE($pronouns, pronouns),
-        last_seen=COALESCE($lastSeen, last_seen),
-        last_online=COALESCE($lastOnline, last_online),
-        last_offline=COALESCE($lastOffline, last_offline),
+        ${setCols.join(', ')}${setCols.length ? ',' : ''}
         updated_at=datetime('now')`,
       params
     );

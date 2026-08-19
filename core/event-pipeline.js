@@ -176,7 +176,8 @@ export class EventPipeline {
             avatarImageUrl: userObj.currentAvatarImageUrl || '',
             avatarThumbnailUrl: userObj.currentAvatarThumbnailImageUrl || '',
             previousAvatarImageUrl: prev.avatar_image_url || '',
-            previousAvatarThumbnailUrl: prev.avatar_image_url || '',
+            // previousAvatarThumbnailUrl 省略：缩略图无独立存储列，无法取到正确旧缩略图，
+            // 用完整图 URL 冒充会语义错误（PR #56 审查指出）
           }});
         }
         const bioChanged = prev.bio
