@@ -979,7 +979,7 @@ export class Storage {
     };
   }
 
-  // ── 新增：查询两个好友（任意第三方）之间的同屏次数 ──
+  // ── 新增：查询两个好友（任意第三方）之间的同屏次数与时长 ──
   //
   // 精确口径（时间窗口 + 可识别实例）：
   //   friend-location 是位置快照事件，无法可靠重建「在场区间」。改为：
@@ -987,7 +987,82 @@ export class Storage {
   //   内的匹配事件对，作为一次同屏。
   //   排除 offline/traveling/private —— private 无房主信息，不同人不同时间的
   //   private 会被误判为同一房间（实测坑），故不计。
-  findFriendPairScreen(userIdA, userIdB, startTime, endTime, windowMinutes = 30) {
+  //   limit 仅限制返回的 matches 条数，不改变 matchCount/总时长的统计口径。
+  findFriendPairScreen(userIdA, userIdB, startTime, endTime, windowMinutes = 30, limit = null) {
+    const { pairs, instRanges } = this._collectPairScreen(userIdA, userIdB, startTime, endTime, windowMinutes);
+
+    // 按世界拆分时长：同一 world 的实例时长求和（段首到段尾，不断开）
+    const worldNames = this._resolveWorldNames([...new Set(pairs.map(p => p.world_id))]);
+    const worldMinutes = new Map();
+    let totalSeconds = 0;
+    for (const [, range] of instRanges) {
+      const secs = Math.max(0, (range.max - range.min) / 1000);
+      totalSeconds += secs;
+      const wname = worldNames.get(range.world_id) || range.world_id;
+      worldMinutes.set(wname, (worldMinutes.get(wname) || 0) + secs / 60);
+    }
+    const worldDuration = [...worldMinutes.entries()]
+      .map(([world, minutes]) => ({ world, minutes: Math.round(minutes * 10) / 10 }))
+      .sort((a, b) => b.minutes - a.minutes);
+
+    const worlds = [...worldNames.values()].filter(Boolean);
+    const limited = limit ? pairs.slice(0, limit) : pairs;
+    const matches = limited.map(p => ({ ...p, world_name: worldNames.get(p.world_id) || '' }));
+
+    const names = this._getDisplayNames([userIdA, userIdB]);
+
+    return {
+      userIdA,
+      userIdB,
+      displayNameA: names[userIdA],
+      displayNameB: names[userIdB],
+      timeRange: { start: startTime, end: endTime },
+      windowMinutes,
+      matchCount: pairs.length,
+      totalSeconds: Math.round(totalSeconds),
+      totalMinutes: Math.round(totalSeconds / 60 * 10) / 10,
+      worldDuration,
+      worlds: [...worlds].filter(Boolean),
+      matches,
+      limit,
+    };
+  }
+
+  // ── 新增：查询两个好友之间的「每次见面」时段（单次见面时长）──
+  //
+  // 按实例切分：同一实例内所有「同屏匹配」事件合并为一次见面，给出段首/段尾/时长。
+  // 复用 _collectPairScreen 的精确匹配口径（同实例 + 时间差 ≤ windowMinutes，
+  // 排除 private/offline/traveling）。
+  findFriendPairMeetings(userIdA, userIdB, startTime, endTime, windowMinutes = 30) {
+    const { instRanges } = this._collectPairScreen(userIdA, userIdB, startTime, endTime, windowMinutes);
+
+    const meetings = [...instRanges.entries()].map(([key, range]) => {
+      const worldId = key.split(':')[0];
+      const instanceId = key.slice(worldId.length + 1);
+      return {
+        worldId,
+        instanceId,
+        startTime: new Date(range.min).toISOString(),
+        endTime: new Date(range.max).toISOString(),
+        durationMinutes: Math.round((range.max - range.min) / 60000),
+      };
+    });
+    meetings.sort((a, b) => Date.parse(b.startTime) - Date.parse(a.startTime));
+
+    return {
+      userIdA,
+      userIdB,
+      meetingCount: meetings.length,
+      totalDurationSeconds: meetings.reduce((s, m) => s + m.durationMinutes * 60, 0),
+      meetings,
+    };
+  }
+
+  // ── 公共 helper：好友对同屏匹配收集（get_friend_pair_screen / get_friend_pair_meeting 共用）──
+  // 返回 { pairs, instRanges }：
+  //   pairs      所有匹配事件对（B 事件 × A 同实例接近事件），按 bt 升序
+  //   instRanges 每实例的段首(min)/段尾(max)/world_id（段首到段尾，不断开）
+  _collectPairScreen(userIdA, userIdB, startTime, endTime, windowMinutes = 30) {
     const getEvents = (uid) => this._query(
       `SELECT created_at, json_extract(content_json, '$.location') AS loc FROM events
        WHERE user_id = $u AND type = 'friend-location'
@@ -1010,7 +1085,6 @@ export class Storage {
     const aEvents = getEvents(userIdA).map(r => ({ t: r.created_at, ...(parse(r.loc) || {}) })).filter(e => e.world_id);
     const bEvents = getEvents(userIdB).map(r => ({ t: r.created_at, ...(parse(r.loc) || {}) })).filter(e => e.world_id);
 
-    // A 的事件按实例分组
     const aByInst = new Map();
     for (const e of aEvents) {
       const k = `${e.world_id}:${e.instance_id}`;
@@ -1018,133 +1092,8 @@ export class Storage {
       aByInst.get(k).push(e.t);
     }
 
-    // 对 B 的每条事件，找 A 同实例且时间接近的事件对
-    const seen = new Set();
-    const matches = [];
-    const matchedWorldIds = new Set();
-    const instTimes = new Map(); // instanceKey -> {min, max} 段首到段尾（不断开）
-    for (const be of bEvents) {
-      const k = `${be.world_id}:${be.instance_id}`;
-      const ats = aByInst.get(k);
-      if (!ats) continue;
-      const bt = Date.parse(be.t);
-      for (const at of ats) {
-        const diff = Math.abs(Date.parse(at) - bt);
-        if (diff <= winMs) {
-          const pairId = `${be.t}|${at}`;
-          if (seen.has(pairId)) continue;
-          seen.add(pairId);
-          matches.push({ at, bt: be.t, world_id: be.world_id, instance_id: be.instance_id });
-          matchedWorldIds.add(be.world_id);
-          const key = `${be.world_id}:${be.instance_id}`;
-          const tA = Date.parse(at);
-          const tB = bt;
-          const cur = instTimes.get(key);
-          if (!cur) instTimes.set(key, { min: Math.min(tA, tB), max: Math.max(tA, tB) });
-          else {
-            cur.min = Math.min(cur.min, tA, tB);
-            cur.max = Math.max(cur.max, tA, tB);
-          }
-        }
-      }
-    }
-
-    // 批量查共现世界名（避免 N+1）
-    const worldNames = new Map();
-    if (matchedWorldIds.size > 0) {
-      const wids = [...matchedWorldIds];
-      const ph = wids.map((_, i) => `$w${i}`).join(',');
-      const params = {};
-      wids.forEach((w, i) => { params[`$w${i}`] = w; });
-      const nameRows = this._query(
-        `SELECT world_id, world_name FROM events WHERE world_id IN (${ph}) AND world_name != ''
-         GROUP BY world_id, world_name ORDER BY MAX(created_at) DESC`,
-        params
-      );
-      for (const r of nameRows) {
-        if (!worldNames.has(r.world_id)) worldNames.set(r.world_id, r.world_name);
-      }
-    }
-    for (const m of matches) m.world_name = worldNames.get(m.world_id) || '';
-    const worlds = [...worldNames.values()].filter(Boolean);
-
-    // 按世界拆分时长：同一 world 的实例时长求和（段首到段尾，不断开）
-    const worldMinutes = new Map();
-    let totalSeconds = 0;
-    for (const [key, range] of instTimes) {
-      const secs = Math.max(0, (range.max - range.min) / 1000);
-      totalSeconds += secs;
-      const wid = key.split(':')[0];
-      const wname = worldNames.get(wid) || wid;
-      worldMinutes.set(wname, (worldMinutes.get(wname) || 0) + secs / 60);
-    }
-    const worldDuration = [...worldMinutes.entries()]
-      .map(([world, minutes]) => ({ world, minutes: Math.round(minutes * 10) / 10 }))
-      .sort((a, b) => b.minutes - a.minutes);
-
-    const names = {};
-    for (const uid of [userIdA, userIdB]) {
-      const rows = this._query(
-        `SELECT display_name FROM events WHERE user_id = $uid AND display_name != '' ORDER BY created_at DESC LIMIT 1`,
-        { $uid: uid }
-      );
-      names[uid] = rows.length ? rows[0].display_name : '';
-    }
-
-    return {
-      userIdA,
-      userIdB,
-      displayNameA: names[userIdA],
-      displayNameB: names[userIdB],
-      timeRange: { start: startTime, end: endTime },
-      windowMinutes,
-      matchCount: matches.length,
-      totalSeconds: Math.round(totalSeconds),
-      totalMinutes: Math.round(totalSeconds / 60 * 10) / 10,
-      worldDuration,
-      worlds: [...worlds].filter(Boolean),
-      matches,
-    };
-  }
-
-  // ── 新增：查询两个好友之间的「每次见面」时段（单次见面时长）──
-  //
-  // 按实例切分：同一实例内所有「同屏匹配」事件合并为一次见面，给出段首/段尾/时长。
-  // 精确口径：对好友 B 的每条可识别实例事件，找好友 A 在同一实例且时间戳在 ±window
-  // 内的匹配事件对，作为一次同屏；排除 offline/traveling/private（private 无房主信息，
-  // 不同人不同时间的 private 会被误判为同一房间，故不计）。
-  findFriendPairMeetings(userIdA, userIdB, startTime, endTime, windowMinutes = 30) {
-    const getEvents = (uid) => this._query(
-      `SELECT created_at, json_extract(content_json, '$.location') AS loc FROM events
-       WHERE user_id = $u AND type = 'friend-location'
-       AND created_at >= $start AND created_at <= $end`,
-      { $u: uid, $start: startTime, $end: endTime }
-    );
-
-    const parse = (loc) => {
-      if (!loc || loc === 'offline' || loc === 'traveling') return null;
-      const parts = loc.split(':');
-      const worldId = parts[0];
-      const instanceId = parts.slice(1).join(':');
-      if (instanceId === 'private') return null;
-      if (!worldId || !instanceId) return null;
-      return { world_id: worldId, instance_id: instanceId };
-    };
-
-    const winMs = Math.max(1, windowMinutes) * 60000;
-    const aEvents = getEvents(userIdA).map(r => ({ t: r.created_at, ...(parse(r.loc) || {}) })).filter(e => e.world_id);
-    const bEvents = getEvents(userIdB).map(r => ({ t: r.created_at, ...(parse(r.loc) || {}) })).filter(e => e.world_id);
-
-    // A 的事件按实例分组
-    const aByInst = new Map();
-    for (const e of aEvents) {
-      const k = `${e.world_id}:${e.instance_id}`;
-      if (!aByInst.has(k)) aByInst.set(k, []);
-      aByInst.get(k).push(e.t);
-    }
-
-    // 收集每次见面（按实例聚合，段首到段尾）
-    const meetingsByInst = new Map(); // key -> { world_id, instance_id, min, max }
+    const pairs = [];
+    const instRanges = new Map(); // key -> { world_id, instance_id, min, max }
     const seen = new Set();
     for (const be of bEvents) {
       const k = `${be.world_id}:${be.instance_id}`;
@@ -1156,32 +1105,49 @@ export class Storage {
         const pairId = `${be.t}|${at}`;
         if (seen.has(pairId)) continue;
         seen.add(pairId);
+        pairs.push({ at, bt: be.t, world_id: be.world_id, instance_id: be.instance_id });
         const tA = Date.parse(at);
-        const tB = bt;
-        const cur = meetingsByInst.get(k);
-        if (!cur) meetingsByInst.set(k, { world_id: be.world_id, instance_id: be.instance_id, min: Math.min(tA, tB), max: Math.max(tA, tB) });
-        else {
-          cur.min = Math.min(cur.min, tA, tB);
-          cur.max = Math.max(cur.max, tA, tB);
-        }
+        const cur = instRanges.get(k) || { world_id: be.world_id, instance_id: be.instance_id, min: Infinity, max: -Infinity };
+        cur.min = Math.min(cur.min, tA, bt);
+        cur.max = Math.max(cur.max, tA, bt);
+        instRanges.set(k, cur);
       }
     }
+    pairs.sort((a, b) => (a.bt < b.bt ? -1 : 1));
 
-    const meetings = [...meetingsByInst.values()].map(m => ({
-      worldId: m.world_id,
-      instanceId: m.instance_id,
-      startTime: new Date(m.min).toISOString(),
-      endTime: new Date(m.max).toISOString(),
-      durationMinutes: Math.round((m.max - m.min) / 60000),
-    }));
-    meetings.sort((a, b) => Date.parse(b.startTime) - Date.parse(a.startTime));
-    return {
-      userIdA,
-      userIdB,
-      meetingCount: meetings.length,
-      totalDurationSeconds: meetings.reduce((s, m) => s + m.durationMinutes * 60, 0),
-      meetings,
-    };
+    return { pairs, instRanges };
+  }
+
+  // ── 公共 helper：批量解析世界名（避免 N+1）──
+  _resolveWorldNames(worldIds) {
+    const out = new Map();
+    const ids = [...new Set(worldIds.filter(Boolean))];
+    if (ids.length === 0) return out;
+    const ph = ids.map((_, i) => `$w${i}`).join(',');
+    const params = {};
+    ids.forEach((w, i) => { params[`$w${i}`] = w; });
+    const rows = this._query(
+      `SELECT world_id, world_name FROM events WHERE world_id IN (${ph}) AND world_name != ''
+       GROUP BY world_id, world_name ORDER BY MAX(created_at) DESC`,
+      params
+    );
+    for (const r of rows) {
+      if (!out.has(r.world_id)) out.set(r.world_id, r.world_name);
+    }
+    return out;
+  }
+
+  // ── 公共 helper：批量解析显示名（最近一条）──
+  _getDisplayNames(userIds) {
+    const out = {};
+    for (const uid of userIds) {
+      const rows = this._query(
+        `SELECT display_name FROM events WHERE user_id = $uid AND display_name != '' ORDER BY created_at DESC LIMIT 1`,
+        { $uid: uid }
+      );
+      out[uid] = rows.length ? rows[0].display_name : '';
+    }
+    return out;
   }
 
   // ── 新增：分析好友上线规律 ──

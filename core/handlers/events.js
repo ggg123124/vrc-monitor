@@ -37,7 +37,7 @@ export function handleGetFriendPairMeetings({ userIdA, userIdB, startTime, endTi
   return storage.findFriendPairMeetings(userIdA, userIdB, start, end, windowMinutes);
 }
 
-export function handleGetFriendPairScreen({ userIdA, userIdB, startTime, endTime, days, windowMinutes }) {
+export function handleGetFriendPairScreen({ userIdA, userIdB, startTime, endTime, days, windowMinutes, limit }) {
   const { storage } = ctx;
   if (!userIdA || !userIdB) throw new Error('userIdA and userIdB are required');
   if (userIdA === userIdB) throw new Error('userIdA and userIdB must be different');
@@ -50,7 +50,7 @@ export function handleGetFriendPairScreen({ userIdA, userIdB, startTime, endTime
     end = new Date().toISOString();
     start = new Date(Date.now() - d * 86400000).toISOString();
   }
-  return storage.findFriendPairScreen(userIdA, userIdB, start, end, windowMinutes);
+  return storage.findFriendPairScreen(userIdA, userIdB, start, end, windowMinutes, limit);
 }
 
 export function handleGetRecentEvents({ limit = 30, offset = 0, typeFilter, userIdFilter }) {
