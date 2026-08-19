@@ -994,7 +994,7 @@ export const CUSTOM_TOOLS = [
 // ── 通知收件箱（2026-08-19 新增）──
   {
     name: 'get_notifications',
-    description: '[query·通知] 通知收件箱：读取当前账号的未读通知（旧 v1 系统）。limit(1-100)/offset 分页；types 逗号分隔过滤（friendRequest/invite/message/boop/requestInvite/votetokick/inviteResponse/requestInviteResponse）；hidden=true 查看已隐藏通知。注意：API 的 type 查询参数已废弃不生效，过滤在本地完成；seen/receiverUserId 仅 WebSocket 推送有，REST 不返回。',
+    description: '[query·通知] 通知收件箱：读取当前账号的未读通知（旧 v1 系统）。limit(1-100)/offset 分页；types 逗号分隔过滤（friendRequest/invite/message/boop/requestInvite/votetokick/inviteResponse/requestInviteResponse）；hidden=true 查看已隐藏通知。返回字段：returned（本页 API 实际返回条数）、shown（types 过滤后条数）、hasMore（本页取满 limit 时可能有下一页）、limit/offset。注意：API 的 type 查询参数已废弃不生效，过滤在本地完成；seen/receiverUserId 仅 WebSocket 推送有，REST 不返回。',
     inputSchema: {
       type: 'object',
       properties: {
