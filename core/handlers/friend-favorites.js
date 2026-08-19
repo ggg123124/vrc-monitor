@@ -24,12 +24,20 @@ async function resolveUserId(api, { userId, displayName }) {
   return { userId: matches[0].id, displayName: matches[0].displayName };
 }
 
-// 拉取好友收藏分组 + 收藏记录
+// 拉取好友收藏分组 + 收藏记录（/favorites 翻页拉全，避免 n=100 上限漏数据，PR #58 审查局限2）
 async function fetchFriendGroups(api) {
   const groupsR = await api._request('GET', '/favorite/groups?type=friend&n=100');
-  const favsR = await api._request('GET', '/favorites?type=friend&n=100&offset=0');
   const groups = (groupsR.status === 200 && Array.isArray(groupsR.data)) ? groupsR.data : [];
-  const favs = (favsR.status === 200 && Array.isArray(favsR.data)) ? favsR.data : [];
+  const favs = [];
+  let offset = 0;
+  while (true) {
+    const r = await api._request('GET', `/favorites?type=friend&n=100&offset=${offset}`);
+    const batch = (r.status === 200 && Array.isArray(r.data)) ? r.data : [];
+    if (batch.length === 0) break;
+    favs.push(...batch);
+    if (batch.length < 100) break;
+    offset += batch.length;
+  }
   return { groups, favs };
 }
 
@@ -93,7 +101,14 @@ export async function handleUnfavoriteFriend({ userId, displayName, groupName, c
   const { api, rateLimiter } = ctx;
   const { userId: targetId, displayName: targetName } = await resolveUserId(api, { userId, displayName });
   const { groups, favs } = await rateLimiter.execute(() => fetchFriendGroups(api));
-  const targetTag = groupName ? (findGroup(groups, groupName)?.name || null) : null;
+  // groupName 已传但分组未找到 → 直接报错，不得回退到「从全部分组移除」（PR #58 审查实测复现：
+  // 拼错分组名会静默删掉好友的所有分组收藏）。与 favorite_friend/move_friend_group 行为一致。
+  let targetTag = null;
+  if (groupName) {
+    const group = findGroup(groups, groupName);
+    if (!group) throw new Error(`收藏分组未找到：${groupName}（可用 get_friend_favorite_groups 查看现有分组）`);
+    targetTag = group.name;
+  }
   const records = favs.filter(f => f.favoriteId === targetId && (!targetTag || (f.tags || [])[0] === targetTag));
   if (records.length === 0) {
     return { ok: false, userId: targetId, displayName: targetName, removed: false, error: groupName ? `该好友不在分组「${groupName}」中` : '该好友不在任何收藏分组中' };
