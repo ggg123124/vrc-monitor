@@ -40,6 +40,13 @@ import {
   handleUnfavoriteFriend,
   handleMoveFriendGroup,
 } from './handlers/friend-favorites.js';
+import {
+  handleGetNotifications,
+  handleSeeNotification,
+  handleHideNotification,
+  handleAcceptFriendRequest,
+  handleDeclineFriendRequest,
+} from './handlers/notifications.js';
 
 import {
   handleGetFriendEvents,
@@ -197,6 +204,22 @@ export async function handleRpc(rpc, session, res) {
             break;
           case 'move_friend_group':
             result = await handleMoveFriendGroup(args);
+            break;
+          // 通知收件箱（2026-08-19 新增）
+          case 'get_notifications':
+            result = await rateLimiter.execute(() => handleGetNotifications(args));
+            break;
+          case 'see_notification':
+            result = await rateLimiter.execute(() => handleSeeNotification(args));
+            break;
+          case 'hide_notification':
+            result = await rateLimiter.execute(() => handleHideNotification(args));
+            break;
+          case 'accept_friend_request':
+            result = await rateLimiter.execute(() => handleAcceptFriendRequest(args));
+            break;
+          case 'decline_friend_request':
+            result = await rateLimiter.execute(() => handleDeclineFriendRequest(args));
             break;
           case 'get_boop_emojis': {
             result = await rateLimiter.execute(() => handleGetBoopEmojis());

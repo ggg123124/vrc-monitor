@@ -66,6 +66,7 @@ VRChat WebSocket (wss://pipeline.vrchat.cloud)
 | `media.js` | 282 | 媒体（Boop emoji/Print 相册/Gallery 图库上传下载） | 10 |
 | `misc.js` | 231 | 杂项（数据库统计/服务状态/新世界扫描/关注名单/同屏/上线规律/昵称/备份） | 12 |
 | `friend-favorites.js` | 2026-08-19 新增 | 好友收藏分组管理（查询/添加/移除/移动，favorites type=friend） | 4 |
+| `notifications.js` | 2026-08-19 新增 | 通知收件箱（读取/已读/隐藏/接受/拒绝好友请求，旧 v1 通知系统） | 5 |
 
 ## start-monitor.js 内部分区
 
