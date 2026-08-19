@@ -102,6 +102,17 @@ export class Storage {
     }
     // 迁移：历史 tags='' 脏数据统一为 '[]'（json_each 对空串抛 malformed JSON，Review R2）
     this._run(`UPDATE world_kb SET tags = '[]' WHERE tags IS NULL OR tags = ''`);
+    // 迁移：旧库 friends 缺 bio/user_icon/pronouns 列（friend-profile 变更追踪用，幂等）
+    const friendCols = this._query(`PRAGMA table_info(friends)`);
+    if (!friendCols.some(c => c.name === 'bio')) {
+      this._run(`ALTER TABLE friends ADD COLUMN bio TEXT`);
+    }
+    if (!friendCols.some(c => c.name === 'user_icon')) {
+      this._run(`ALTER TABLE friends ADD COLUMN user_icon TEXT`);
+    }
+    if (!friendCols.some(c => c.name === 'pronouns')) {
+      this._run(`ALTER TABLE friends ADD COLUMN pronouns TEXT`);
+    }
     return this;
   }
 
@@ -253,46 +264,67 @@ export class Storage {
   // ── 好友状态 ──
 
   upsertFriend(friend) {
-    const params = {
-      $userId: friend.userId,
-      $displayName: friend.displayName || '',
-      $memo: friend.memo ?? null,
-      $trustLevel: friend.trustLevel ?? null,
-      $isOnline: friend.isOnline ? 1 : 0,
-      $location: friend.location || '',
-      $worldId: friend.worldId || '',
-      $worldName: friend.worldName || '',
-      $platform: friend.platform || '',
-      $status: friend.status || '',
-      $statusDescription: friend.statusDescription || '',
-      $avatarImageUrl: friend.avatarImageUrl || '',
-      $lastSeen: friend.lastSeen || '',
-      $lastOnline: friend.lastOnline || '',
-      $lastOffline: friend.lastOffline || '',
+    const userId = friend.userId;
+    // 只更新显式传入的字段：partial upsert（如 friend-location/friend-active 事件只带少数字段）
+    // 不得覆盖未传的 profile 字段。历史 bug（PR #56 审查实测复现）：location 事件穿插会
+    // 把 bio/status/avatar_image_url 等用 '' 覆盖，导致资料变更追踪基线被清空、main 上
+    // status/avatar 数据同源丢失。故按 key 存在性动态构建 SET 子句。
+    const columns = {
+      display_name: 'displayName',
+      memo: 'memo',
+      trust_level: 'trustLevel',
+      is_online: 'isOnline',
+      location: 'location',
+      world_id: 'worldId',
+      world_name: 'worldName',
+      platform: 'platform',
+      status: 'status',
+      status_description: 'statusDescription',
+      avatar_image_url: 'avatarImageUrl',
+      bio: 'bio',
+      user_icon: 'userIcon',
+      pronouns: 'pronouns',
+      last_seen: 'lastSeen',
+      last_online: 'lastOnline',
+      last_offline: 'lastOffline',
+    };
+    const norm = {
+      displayName: v => v || '',
+      memo: v => v ?? null,
+      trustLevel: v => v ?? null,
+      isOnline: v => v ? 1 : 0,
+      location: v => v || '',
+      worldId: v => v || '',
+      worldName: v => v || '',
+      platform: v => v || '',
+      status: v => v || '',
+      statusDescription: v => v || '',
+      avatarImageUrl: v => v || '',
+      bio: v => v || '',
+      userIcon: v => v || '',
+      pronouns: v => v || '',
+      lastSeen: v => v || '',
+      lastOnline: v => v || '',
+      lastOffline: v => v || '',
     };
 
+    const setCols = [];
+    const params = { $userId: userId };
+    for (const [col, key] of Object.entries(columns)) {
+      if (friend[key] === undefined) continue;  // 未传 → 不更新该列
+      params[`$${col}`] = norm[key](friend[key]);
+      setCols.push(`${col}=COALESCE($${col}, ${col})`);
+    }
+    if (setCols.length === 0) return;
+
+    const insCols = ['user_id', ...Object.keys(columns).filter(c => friend[columns[c]] !== undefined)];
+    const insPh = insCols.map(c => c === 'user_id' ? '$userId' : `$${c}`);
+
     this._run(
-      `INSERT INTO friends (user_id, display_name, memo, trust_level, is_online, location,
-        world_id, world_name, platform, status, status_description, avatar_image_url,
-        last_seen, last_online, last_offline)
-       VALUES ($userId, $displayName, $memo, $trustLevel, $isOnline, $location,
-        $worldId, $worldName, $platform, $status, $statusDescription, $avatarImageUrl,
-        $lastSeen, $lastOnline, $lastOffline)
+      `INSERT INTO friends (${insCols.join(', ')})
+       VALUES (${insPh.join(', ')})
        ON CONFLICT(user_id) DO UPDATE SET
-        display_name=COALESCE($displayName, display_name),
-        memo=COALESCE($memo, memo),
-        trust_level=COALESCE($trustLevel, trust_level),
-        is_online=COALESCE($isOnline, is_online),
-        location=COALESCE($location, location),
-        world_id=COALESCE($worldId, world_id),
-        world_name=COALESCE($worldName, world_name),
-        platform=COALESCE($platform, platform),
-        status=COALESCE($status, status),
-        status_description=COALESCE($statusDescription, status_description),
-        avatar_image_url=COALESCE($avatarImageUrl, avatar_image_url),
-        last_seen=COALESCE($lastSeen, last_seen),
-        last_online=COALESCE($lastOnline, last_online),
-        last_offline=COALESCE($lastOffline, last_offline),
+        ${setCols.join(', ')}${setCols.length ? ',' : ''}
         updated_at=datetime('now')`,
       params
     );
@@ -309,6 +341,41 @@ export class Storage {
   getFriend(userId) {
     const rows = this._query(`SELECT * FROM friends WHERE user_id = $userId`, { $userId: userId });
     return rows[0] || null;
+  }
+
+  // 好友资料变更历史（friend-profile 变更追踪，2026-08-19 新增）
+  // 查询 events 表中 content_json.type 为 avatar/status/bio/user_icon/pronouns 的记录。
+  // 与 VRCX 迁移脚本（feed_avatar/feed_status/feed_bio）写入格式一致：顶层 type='friend-update'，
+  // 实际变更类型在 content_json.type 里。types 参数逗号分隔过滤（默认全部）。
+  getFriendProfileChanges(userId, { limit = 50, offset = 0, types } = {}) {
+    const validTypes = ['avatar', 'status', 'bio', 'user_icon', 'pronouns'];
+    let typesArr = validTypes;
+    if (types) {
+      typesArr = String(types).split(',').map(t => t.trim()).filter(t => validTypes.includes(t));
+      if (typesArr.length === 0) typesArr = validTypes;
+    }
+    const params = { $limit: limit, $offset: offset };
+    const placeholders = typesArr.map((t, i) => { params[`$t${i}`] = t; return `$t${i}`; }).join(',');
+    let sql = `SELECT * FROM events WHERE type = 'friend-update'
+               AND json_extract(content_json, '$.type') IN (${placeholders})`;
+    if (userId) { sql += ` AND user_id = $userId`; params.$userId = userId; }
+    sql += ` ORDER BY created_at DESC LIMIT $limit OFFSET $offset`;
+    return this._query(sql, params);
+  }
+
+  getFriendProfileChangeCount(userId, { types } = {}) {
+    const validTypes = ['avatar', 'status', 'bio', 'user_icon', 'pronouns'];
+    let typesArr = validTypes;
+    if (types) {
+      typesArr = String(types).split(',').map(t => t.trim()).filter(t => validTypes.includes(t));
+      if (typesArr.length === 0) typesArr = validTypes;
+    }
+    const params = {};
+    const placeholders = typesArr.map((t, i) => { params[`$t${i}`] = t; return `$t${i}`; }).join(',');
+    let sql = `SELECT COUNT(*) n FROM events WHERE type = 'friend-update'
+               AND json_extract(content_json, '$.type') IN (${placeholders})`;
+    if (userId) { sql += ` AND user_id = $userId`; params.$userId = userId; }
+    return this._query(sql, params)[0].n;
   }
 
   searchFriends(query) {

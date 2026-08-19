@@ -101,6 +101,7 @@ metadata:
 | `favorite_friend` | **添加好友到收藏分组**（2026-08-19 新增）：POST /favorites type=friend。userId/displayName 二选一；groupName 必填（显示名或分组名）；须已是好友（403 返回 not friends）；重复收藏返回 already favorited（不抛错）。写操作，confirm: true 才执行 |
 | `unfavorite_friend` | **从收藏分组移除好友**（2026-08-19 新增）：DELETE /favorites/{记录id}（先查记录 id 再删，可逆）。groupName 可选（省略=从全部分组移除）。写操作，confirm: true 才执行 |
 | `move_friend_group` | **移动好友到另一分组**（2026-08-19 新增）：删旧建新（API 无原地更新 tags 端点，与 VRCX 行为一致）。toGroup 必填。写操作，confirm: true 才执行 |
+| `get_friend_profile_changes` | **好友资料变更历史**（2026-08-19 新增）：Avatar/Bio/状态/头像图标/代词变更记录。事件管道实时采集 friend-update 的 user 对象 diff 落库，与 VRCX 迁移数据（feed_avatar/feed_status/feed_bio）同 type 打通。userId 可选（省略=全部好友）；types 逗号分隔过滤（avatar/status/bio/user_icon/pronouns）；limit(1-200)/offset 分页。每次变更返回 change 含当前值+旧值 |
 | `get_notifications` | **通知收件箱**（2026-08-19 新增）：读取当前账号未读通知（旧 v1 系统）。limit/offset 分页；types 过滤（friendRequest/invite/message/boop/requestInvite/votetokick/inviteResponse/requestInviteResponse）；hidden=true 查已隐藏。注意：API 的 type 查询参数已废弃不生效（本地过滤）；seen/receiverUserId 仅 WS 推送有，REST 不返回 |
 | `see_notification` / `hide_notification` | **通知已读/隐藏**：标记已读 PUT .../see；隐藏清除 PUT .../hide（旧 v1 hide 即删除）。notificationId 必填 |
 | `accept_friend_request` | **接受好友请求**（2026-08-19 新增）：PUT /auth/user/notifications/{id}/accept，**接受即直接加为好友**，不可逆，必须 confirm: true 才执行，否则只预览 |

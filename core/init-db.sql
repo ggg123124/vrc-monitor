@@ -33,6 +33,9 @@ CREATE TABLE IF NOT EXISTS friends (
   status TEXT,
   status_description TEXT,
   avatar_image_url TEXT,
+  bio TEXT,                        -- 个人简介（friend-profile 变更追踪用）
+  user_icon TEXT,                  -- 头像小图标 URL（friend-profile 变更追踪用）
+  pronouns TEXT,                   -- 人称代词（friend-profile 变更追踪用）
   last_seen TEXT,                  -- 最后一次见到（任意活动）
   last_online TEXT,                -- 最后一次上线
   last_offline TEXT,               -- 最后一次下线
