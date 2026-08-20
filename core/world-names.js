@@ -14,6 +14,22 @@
 /** 进程内负缓存：Map<worldId, expiresAt> */
 const negativeCache = new Map();
 const NEGATIVE_TTL_MS = 5 * 60 * 1000; // 5 分钟
+// 定期清理过期条目，防止长期运行下失败 worldId 无限累积
+const NEGATIVE_PRUNE_INTERVAL_MS = 5 * 60 * 1000; // 与 TTL 同频即可
+
+/**
+ * 移除所有已过期的负缓存条目。
+ * 仅在读取与定期清理时惰性调用，避免每次判断都扫描全表。
+ */
+function pruneNegativeCache(now = Date.now()) {
+  for (const [wid, expiresAt] of negativeCache) {
+    if (expiresAt <= now) negativeCache.delete(wid);
+  }
+}
+
+// 惰性定期清理：防止失败 worldId 条目长期累积（PR #64 review 建议）。
+// 定时器不 keep 进程存活（.unref），服务退出即自然丢弃。
+setInterval(() => pruneNegativeCache(), NEGATIVE_PRUNE_INTERVAL_MS).unref();
 
 /**
  * 批量解析世界名。
@@ -32,12 +48,17 @@ export async function resolveWorldNames(ctx, worldIds, opts = {}) {
   const result = new Map();
   const missing = [];
 
+  const now = Date.now();
   for (const wid of worldIds) {
     if (!wid) continue;
-    // 负缓存命中：已知失败，直接兜底，不重试
-    if (negativeCache.has(wid) && negativeCache.get(wid) > Date.now()) {
-      result.set(wid, onFail(wid));
-      continue;
+    // 负缓存命中：已知失败，直接兜底，不重试；过期条目惰性移除，避免累积
+    const expiresAt = negativeCache.get(wid);
+    if (expiresAt !== undefined) {
+      if (expiresAt > now) {
+        result.set(wid, onFail(wid));
+        continue;
+      }
+      negativeCache.delete(wid);
     }
     const cached = storage.getWorldName(wid);
     if (cached && cached.name) {
