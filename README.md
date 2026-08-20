@@ -47,6 +47,7 @@
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | 系统架构：数据流、模块职责、依赖关系 | 理解代码结构 |
 | [docs/history/](./docs/history/INDEX.md) | 项目演进记录：里程碑时间线、每月发布/PR 与演进意义 | 新 Agent 上手先读 |
 | [service-windows/](./service-windows/README.md) | Windows 开机自启 + 崩溃自愈 + 每日修复报告（一键脚本） | Windows 常驻运行 |
+| [service-linux/](./service-linux/README.md) | Linux systemd 用户服务：开机自启 + 崩溃自愈 + journal 日志（一键脚本） | Linux 常驻运行 |
 
 **MCP 工具**：服务通过 MCP 暴露工具，覆盖好友查询、社交互动、媒体管理、群组操作、世界推荐、素材检索等能力域。**完整工具清单（全部工具）统一登记在 [skills/vrc-monitor-agent/SKILL.md](./skills/vrc-monitor-agent/SKILL.md)「MCP 工具」章节**，Agent 照此调用。其余 skill 为各能力域的工作流补充（不重复登记工具）：`vrchat-social-queries`（社交域：在线五要素/同屏/规律/昵称）、`vrchat-world-queries`（世界域：待逛/推荐/情报挖掘）、`vrchat-group-queries`（群组域：查询/公告分诊）、`booth-query-display`（BOOTH 检索/展示格式）、`vrchat-assistant-development`（开发规范）、`review-workflow`（审核工作流：PR/issue 审核、端到端实测、多轮复核、协作审核）。
 

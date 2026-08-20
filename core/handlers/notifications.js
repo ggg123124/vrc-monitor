@@ -44,8 +44,9 @@ export async function handleGetNotifications({ limit = 30, offset = 0, types, hi
     list = list.filter(x => typeSet.has(x.type));
   }
   return {
-    total: all.length,
+    returned: all.length,
     shown: list.length,
+    hasMore: all.length >= n,
     limit: n,
     offset: off,
     filteredByTypes: types ? String(types).split(',').map(t => t.trim()) : null,

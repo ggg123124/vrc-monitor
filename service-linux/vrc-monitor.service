@@ -1,0 +1,44 @@
+# vrc-monitor 常驻服务（Linux systemd 用户服务）
+#
+# 安装（推荐）：bash service-linux/setup-linux.sh
+#   - 自动把模板中的路径占位符替换为实际仓库路径、解析 node / python 后
+#     生成 ~/.config/systemd/user/vrc-monitor.service，并 enable --now
+#
+# 手动安装（仓库位于 ~/vrchat-assistant 时可直接使用本模板）：
+#   mkdir -p ~/.config/systemd/user
+#   cp service-linux/vrc-monitor.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now vrc-monitor
+#   loginctl enable-linger        # 登出后继续运行（无头服务器必需）
+#
+# 日志：journalctl --user -u vrc-monitor -f（服务日志走 stdout → journald）
+
+[Unit]
+Description=VRChat 好友监控服务 (vrc-monitor)
+Documentation=https://github.com/ggg123124/vrchat-assistant
+
+[Service]
+Type=simple
+WorkingDirectory=%h/vrchat-assistant
+ExecStart=/usr/bin/env node %h/vrchat-assistant/start-monitor.js
+# 崩溃自愈：进程异常退出后 5 秒自动重启（等价 Windows 方案的 watchdog）
+Restart=always
+RestartSec=5
+# 日志采集走 journald（符合开发规范「日志走 stdout」约定）
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vrc-monitor
+# ---- 可选环境变量（按需取消注释；或用 systemctl --user edit vrc-monitor 写 drop-in）----
+# OTP 自动登录需要 python 解释器。systemd 用户服务的 PATH 较精简，
+# 若 PATH 中找不到 python（只有 python3 等），必须指定解释器，
+# 否则 OTP 自动登录失败会陷入重试循环（每次循环 VRChat 都会重发验证码邮件）：
+# Environment=VRC_MONITOR_PYTHON=/usr/bin/python3
+# 网络代理（如需要）：
+# Environment=HTTPS_PROXY=http://127.0.0.1:7892
+# Environment=HTTP_PROXY=http://127.0.0.1:7892
+# 数据目录可迁移到独立数据盘（默认在仓库内）：
+# Environment=VRC_MONITOR_DB_PATH=/data/vrc-monitor.sqlite3
+# Environment=VRC_MONITOR_BACKUP_DIR=/data/vrc-monitor-backups
+
+[Install]
+WantedBy=default.target

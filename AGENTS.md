@@ -91,7 +91,7 @@
 - `VRC_MONITOR_NODE`：指向 Node.js 可执行文件路径。若不设置，自动从 PATH 查找 `node`。
 - `VRC_MONITOR_DB_PATH`：SQLite 数据库文件路径（默认 `<仓库>/vrc-monitor.sqlite3`）。可将数据库迁移到任意位置（如独立数据盘），配合常驻服务使用。
 - `VRC_MONITOR_BACKUP_DIR`：自动备份目录（默认 `<仓库>/backups`）。
-- `VRC_MONITOR_LOG_DIR`：常驻服务脚本的日志 / 修复记录目录（默认 `<仓库>/service-logs`，仅 `service-windows/` 脚本使用）。
+- `VRC_MONITOR_LOG_DIR`：常驻服务脚本的日志 / 修复记录目录（默认 `<仓库>/service-logs`，仅 `service-windows/` 脚本使用；Linux systemd 方案日志走 journald，无需设置）。
 - `VRC_MONITOR_PYTHON`：执行 fetch-otp.py 的 Python 解释器路径（默认 PATH 中的 `python`）。以计划任务 / systemd / 容器等方式运行且 PATH 中无 python 时必须设置，否则 OTP 自动登录失败会陷入重试循环（每次循环 VRChat 都会重新发送验证码邮件）。**路径含空格无需自带引号**（如 `C:\Program Files\Python311\python.exe`），脚本执行时会自动加引号。
 
 ### 3. 启动服务
@@ -124,7 +124,7 @@ hermes plugins enable vrc-monitor
 
 插件提供 `vrc_status` / `vrc_start` / `vrc_stop` / `vrc_restart` 工具，并在每次 Hermes 会话开始时自动拉起服务（on_session_start 钩子）。
 
-> **平台限制**：插件当前仅支持 Windows（`plugin.yaml` 中 `platforms: [windows]`）。macOS / Linux 用户需手动执行 `node start-monitor.js` 启动服务，或等待插件跨平台支持。Node.js 服务本身是跨平台的，仅 Hermes 插件托管层有此限制。
+> **平台限制**：插件当前仅支持 Windows（`plugin.yaml` 中 `platforms: [windows]`）。Linux 用户可用 `service-linux/`（systemd 用户服务，`bash service-linux/setup-linux.sh`）托管常驻，macOS 用户需手动执行 `node start-monitor.js` 启动服务，或等待插件跨平台支持。Node.js 服务本身是跨平台的，仅 Hermes 插件托管层有此限制。
 
 > 注意：`dashboard/` 子目录（manifest.json + plugin_api.py）是桌面插件和 `hermes dashboard` 的后端 API，复制时**不能遗漏**，否则桌面端「配置」功能不可用。
 >
@@ -201,7 +201,8 @@ cp -r skills/review-workflow "$HERMES_HOME/skills/"
 | 查看服务状态 | Hermes 工具 `vrc_status` 或桌面插件面板 |
 | 配置账号 | 桌面插件「配置」弹窗，或编辑 `credentials.json` |
 | 重启服务 | Hermes 工具 `vrc_restart` |
-| 常驻服务（开机自启 + 崩溃自愈 + 每日修复报告） | `service-windows\setup-windows.cmd`（Windows；详见 `service-windows/README.md`） |
+| 常驻服务（Windows：开机自启 + 崩溃自愈 + 每日修复报告） | `service-windows\setup-windows.cmd`（详见 `service-windows/README.md`） |
+| 常驻服务（Linux：systemd 用户服务，开机自启 + 崩溃自愈 + journal 日志） | `bash service-linux/setup-linux.sh`（详见 `service-linux/README.md`） |
 | 迁移 VRCX 数据 | `node migrate-vrcx0.mjs`（better-sqlite3 引擎，运行中迁移安全但仍建议先停服务；检测到服务运行会要求 `--force`；**可重复执行**——v1.2.0 起幂等，自动跳过已迁移记录，旧数据需 `--force` 重插，见 PR #14）；完成后 `node start-monitor.js` |
 
 ## X 博主世界推荐追踪

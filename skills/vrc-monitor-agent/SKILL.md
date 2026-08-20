@@ -37,7 +37,7 @@ metadata:
 | `backup_database` | 立即备份数据库（WAL 在线备份，保留最近 2 份到 backups/）；服务启动 + 每 24h 自动备份 |
 | `get_friend_events` | 某好友的事件历史（本地库） |
 | `get_recent_events` | 最新事件流 |
-| `get_companions` | **同屏交叉查询**（指定时间窗口内同实例的好友；可查自己或任意好友） |
+| `get_companions` | **同屏交叉查询**（指定时间窗口内同实例的好友；可查自己或任意好友）。**默认不返回 userTimeline**（位置事件多时输出会过大被截断），仅返回 companions 汇总；需逐条位置明细时传 `includeTimeline=true` |
 | `get_friend_pair_meeting` | **好友对单次见面分析**（查任意两个好友之间「每次见面」的时段与时长；按实例切分，同一实例内同屏匹配合并为一次见面（**含实例内中途断开空档，合并为一次**），返回每次 start/end/durationMinutes/世界/实例 + meetingCount + totalDurationSeconds；口径：同实例且时间差 ≤ windowMinutes（默认30），排除 private/offline/traveling；startTime/endTime 与 days 二选一） |
 | `get_friend_pair_screen` | **好友对同屏次数与时长**（查任意两个好友之间的共玩/同房统计；精确口径：B 的每条可识别实例事件匹配 A 同一实例且时间差 ≤ windowMinutes（默认30）→ 计同屏；排除 private/offline/traveling，不同时间去过同一房不计；返回 matchCount（次数）、totalMinutes/totalSeconds（总时长，段首到段尾累加，**含实例内中途断开空档**）、worldDuration（按世界拆分时长）、worlds（共现世界）、matches（默认全量，可加 limit 限制条数）；startTime/endTime 与 days 二选一） |
 | `get_online_pattern` | **上线规律分析**（上线/下线/活跃时段分布 + 活跃天数/频率 + 峰值建议） |
@@ -104,7 +104,7 @@ metadata:
 | `unfavorite_friend` | **从收藏分组移除好友**（2026-08-19 新增）：DELETE /favorites/{记录id}（先查记录 id 再删，可逆）。groupName 可选（省略=从全部分组移除）。写操作，confirm: true 才执行 |
 | `move_friend_group` | **移动好友到另一分组**（2026-08-19 新增）：删旧建新（API 无原地更新 tags 端点，与 VRCX 行为一致）。toGroup 必填。写操作，confirm: true 才执行 |
 | `get_friend_profile_changes` | **好友资料变更历史**（2026-08-19 新增）：Avatar/Bio/状态/头像图标/代词变更记录。事件管道实时采集 friend-update 的 user 对象 diff 落库，与 VRCX 迁移数据（feed_avatar/feed_status/feed_bio）同 type 打通。userId 可选（省略=全部好友）；types 逗号分隔过滤（avatar/status/bio/user_icon/pronouns）；limit(1-200)/offset 分页。每次变更返回 change 含当前值+旧值 |
-| `get_notifications` | **通知收件箱**（2026-08-19 新增）：读取当前账号未读通知（旧 v1 系统）。limit/offset 分页；types 过滤（friendRequest/invite/message/boop/requestInvite/votetokick/inviteResponse/requestInviteResponse）；hidden=true 查已隐藏。注意：API 的 type 查询参数已废弃不生效（本地过滤）；seen/receiverUserId 仅 WS 推送有，REST 不返回 |
+| `get_notifications` | **通知收件箱**（2026-08-19 新增）：读取当前账号未读通知（旧 v1 系统）。limit/offset 分页；types 过滤（friendRequest/invite/message/boop/requestInvite/votetokick/inviteResponse/requestInviteResponse）；hidden=true 查已隐藏。返回字段：returned（本页返回条数）、shown（过滤后条数）、hasMore（本页取满 limit 时可能还有下一页）。注意：API 的 type 查询参数已废弃不生效（本地过滤）；seen/receiverUserId 仅 WS 推送有，REST 不返回 |
 | `see_notification` / `hide_notification` | **通知已读/隐藏**：标记已读 PUT .../see；隐藏清除 PUT .../hide（旧 v1 hide 即删除）。notificationId 必填 |
 | `accept_friend_request` | **接受好友请求**（2026-08-19 新增）：PUT /auth/user/notifications/{id}/accept，**接受即直接加为好友**，不可逆，必须 confirm: true 才执行，否则只预览 |
 | `decline_friend_request` | **拒绝好友请求**（2026-08-19 新增）：旧 v1 无独立拒绝端点，hide 即清除该通知（对方不会收到明确拒绝提示），必须 confirm: true 才执行，否则只预览 |

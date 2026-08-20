@@ -3,6 +3,7 @@
  */
 
 import { ctx, log } from '../server-context.js';
+import { resolveWorldNames } from '../world-names.js';
 
 export async function handleGetFriendEvents({ userId, limit = 20, offset = 0, types }) {
   const { storage } = ctx;
@@ -253,26 +254,11 @@ export async function handleGetWeeklyReport({ days = 7 }) {
   // 3. 自己的上线规律（复用 getOnlinePattern，window = 30 天）
   const pattern = storage.getOnlinePattern(userId, { days: Math.max(days, 30) });
 
-  // 4. 世界名解析（缓存优先，缺失批量 API 查询并写 world_cache——懒刷新，无 TTL 自动过期）
+  // 4. 世界名解析（缓存优先，缺失批量 API 查询并写 world_cache——懒刷新，无 TTL 自动过期；
+  //    统一走 resolveWorldNames，失败写进程内负缓存避免重复重试）
   const allWorldIds = new Set([...worldMinutes.keys(), ...(function(){ const s=new Set(); for (const d of dayWorlds.values()) for (const w of d) s.add(w); return s; })()]);
-  const worldNameMap = {};
-  const missingWorlds = [];
-  for (const wid of allWorldIds) {
-    const cached = storage.getWorldName(wid);
-    if (cached && cached.name) worldNameMap[wid] = cached.name;
-    else missingWorlds.push(wid);
-  }
-  // 批量 API 查缺失世界名（串行，rateLimiter 在 RPC case 外层已包）
-  for (const wid of missingWorlds) {
-    try {
-      const r = await api._request('GET', `/worlds/${wid}`);
-      if (r.status === 200 && r.data) {
-        const w = r.data;
-        worldNameMap[wid] = w.name || wid;
-        storage.upsertWorld({ worldId: w.id, name: w.name, authorName: w.authorName, capacity: w.capacity, favorites: w.favorites, releaseStatus: w.releaseStatus, tags: w.tags || [], description: w.description || '', imageUrl: w.imageUrl || '' });
-      } else worldNameMap[wid] = wid;
-    } catch { worldNameMap[wid] = wid; }
-  }
+  const nameMap = await resolveWorldNames(ctx, [...allWorldIds], { throttleMs: 0, onFail: (wid) => wid });
+  const worldNameMap = Object.fromEntries([...nameMap.entries()]);
 
   // 5. 群组活动（自己进过的群组房）——从 sessions 对应的事件里找 ~group(grp_/gmem_xxx)
   //    直接查 user-location 事件的 groupId
@@ -293,22 +279,14 @@ export async function handleGetWeeklyReport({ days = 7 }) {
         groupIds.add(m[1]);
         const wid = loc.split(':')[0];
         groupActivities.push({ time: row.created_at, worldId: wid, worldName: worldNameMap[wid] || wid, groupId: m[1] });
-        // 群组房可能停留 <3min 未进 worldMinutes，这里补入世界名解析集合
-        if (!worldNameMap[wid] && !missingWorlds.includes(wid)) missingWorlds.push(wid);
       }
     } catch {}
   }
-  // 补充解析群组房的世界名（第 4 步未覆盖的）
-  for (const wid of missingWorlds) {
-    if (worldNameMap[wid]) continue;
-    try {
-      const r = await api._request('GET', `/worlds/${wid}`);
-      if (r.status === 200 && r.data) {
-        const w = r.data;
-        worldNameMap[wid] = w.name || wid;
-        storage.upsertWorld({ worldId: w.id, name: w.name, authorName: w.authorName, capacity: w.capacity, favorites: w.favorites, releaseStatus: w.releaseStatus, tags: w.tags || [], description: w.description || '', imageUrl: w.imageUrl || '' });
-      } else worldNameMap[wid] = wid;
-    } catch { worldNameMap[wid] = wid; }
+  // 补充解析群组房的世界名（第 4 步未覆盖的；resolveWorldNames 内部有负缓存，不会重复 API）
+  const groupWids = [...new Set(groupActivities.map(a => a.worldId).filter(w => w && !worldNameMap[w]))];
+  if (groupWids.length > 0) {
+    const gNameMap = await resolveWorldNames(ctx, groupWids, { throttleMs: 0, onFail: (wid) => wid });
+    for (const [wid, name] of gNameMap.entries()) worldNameMap[wid] = name;
   }
   // 回填 groupActivities 的世界名
   for (const a of groupActivities) {

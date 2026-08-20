@@ -288,11 +288,11 @@ export function handleRemoveFromWatchlist({ userId }) {
   return { success: true, userId };
 }
 
-export function handleGetCompanions({ startTime, endTime, userId }) {
+export function handleGetCompanions({ startTime, endTime, userId, includeTimeline }) {
   const { storage, serverState } = ctx;
   const targetUserId = userId || serverState.authUser?.id;
   if (!targetUserId) throw new Error('No userId provided and not authenticated');
-  return storage.findCompanions(targetUserId, startTime, endTime);
+  return storage.findCompanions(targetUserId, startTime, endTime, includeTimeline === true);
 }
 
 export function handleGetOnlinePattern({ userId, days, startTime, endTime }) {
