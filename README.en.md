@@ -65,10 +65,10 @@ A: Network conditions in China may require a proxy. The service auto-falls back 
 A: Check that `imap_auth_code` in `credentials.json` is a correct IMAP authorization code (not your login password). The service cools down 120s after auth failures (5min on 401 rate limit) and retries automatically.
 
 **Q: My account uses Authenticator (TOTP) 2FA and can't auto-login?**
-A: The service supports TOTP: when `/health` returns `auth.needsTotp: true`, an agent can call the `submit_totp` MCP tool with the current 6-digit code to complete login. If both email OTP and TOTP are enabled, email OTP is preferred; TOTP-only accounts wait for manual submission.
+A: Auto-login is supported: add `totp_secret` to `credentials.json` (the Authenticator otpauth:// URI or base32 key) and the service generates the code locally via RFC 6238 for startup / runtime-401 / WS-reconnect logins (`auth.totpAutoEnabled: true` in `/health` when enabled). Without it, when `/health` returns `auth.needsTotp: true`, an agent calls the `submit_totp` MCP tool with the current 6-digit code to complete login. Auto-channel priority: email OTP → automatic TOTP → manual `submit_totp`.
 
 **Q: Do I need to handle expired cookies manually?**
-A: No. Service startup and WS reconnects automatically go through OTP login, and the valid cookie is persisted to `auth_cookie.txt`. During runtime, when the API returns 401 (cookie expired), the service also auto-triggers re-login — if TOTP is required it enters `needsTotp` state, call `submit_totp` to complete, no restart needed.
+A: No. Service startup and WS reconnects automatically go through OTP login, and the valid cookie is persisted to `auth_cookie.txt`. During runtime, when the API returns 401 (cookie expired), the service also auto-triggers re-login — if TOTP is required and `totp_secret` is configured it completes automatically; otherwise it enters `needsTotp` state and you call `submit_totp`, no restart needed.
 
 **Q: The database file is too big?**
 A: Normal. ~300K events ≈ 300+ MB. better-sqlite3 (WAL mode) reads on demand and never loads the whole DB into memory.

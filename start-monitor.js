@@ -22,6 +22,7 @@ import { backupDatabase } from './core/backup.js';
 import { FriendStateManager } from './core/friend-state.js';
 import { createServer } from './core/http-server.js';
 import { fetchOtpFromEmail } from './core/otp-fetcher.js';
+import { parseTotpSecret, generateTotp } from './core/totp.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -179,6 +180,23 @@ async function main() {
   }
   ctx.api = new VrchatApiClient(creds.email, creds.password);
   ctx.api.setOtpFetcher(fetchOtpFromEmail);  // 401 自动重认证时复用邮箱 OTP 抓取
+
+  // 可选的 TOTP 自动登录（credentials.json 配置 totp_secret 后启用）
+  // 服务用 RFC 6238 本地生成验证码，登录/401 重认证/WS 重连全程自动，无需手动 submit_totp
+  let totpFetcher = null;
+  if (creds.totp_secret) {
+    try {
+      const { secretBytes, digits, period, algorithm } = parseTotpSecret(creds.totp_secret);
+      totpFetcher = () => {
+        const counter = Math.floor(Math.floor(Date.now() / 1000) / period);
+        return generateTotp(secretBytes, counter, { digits, algorithm });
+      };
+      ctx.api.setTotpFetcher(totpFetcher);
+      log(`   🔐 TOTP 自动登录已启用（digits=${digits}, period=${period}s, ${algorithm}）`);
+    } catch (parseErr) {
+      console.error(`   ⚠️ totp_secret 解析失败（${parseErr.message}）：TOTP 自动登录不可用，将回退手动 submit_totp`);
+    }
+  }
   ctx.api.loadCookieFromFile(COOKIE_FILE);
   try {
     const user = await ctx.api.ensureAuthWithAutoOtp(fetchOtpFromEmail);
@@ -190,7 +208,11 @@ async function main() {
     ctx.serverState.needsOtp = false;
     ctx.serverState.needsTotp = !!err.needsTotp;
     if (err.needsTotp) {
-      log(`   ⚠️ 账号启用 TOTP 两步验证：请调用 MCP 工具 submit_totp 提交当前验证码`);
+      if (totpFetcher) {
+        log(`   ⚠️ 账号需要 TOTP 验证码：已配置自动登录，将在认证冷却后自动重试（或调用 submit_totp 手动提交）`);
+      } else {
+        log(`   ⚠️ 账号启用 TOTP 两步验证：请调用 MCP 工具 submit_totp 提交当前验证码（或在 credentials.json 配置 totp_secret 启用自动登录）`);
+      }
     }
     log(`   ❌ 登录失败: ${err.message}`);
     // 不退出进程，让 MCP/WS 服务启动以便后续重试

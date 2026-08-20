@@ -67,6 +67,7 @@ async function handleRequest(req, res) {
       auth: serverState.authUser && !serverState.needsTotp
         ? { authenticated: true, user: serverState.authUser }
         : { authenticated: false, needsOtp: serverState.needsOtp, needsTotp: serverState.needsTotp },
+      totpAutoEnabled: !!(ctx.api?.totpFetcher),
       db: storage.getStats(),
       rateLimiter: rateLimiter.getStats(),
       ws: wsManager?.getState(),

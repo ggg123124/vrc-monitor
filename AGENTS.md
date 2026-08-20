@@ -244,20 +244,23 @@ Agent 在配置、使用、维护本软件过程中，若发现原始代码存�
 
 ### TOTP（Authenticator 验证码）登录
 
-若 VRChat 账号启用了 **TOTP 两步验证**（Authenticator 应用），以下情况会进入 `needsTotp` 状态（`/health` 的 `auth.needsTotp` 为 `true`，或日志提示调用 `submit_totp`）：
+VRChat 账号启用 **TOTP 两步验证**（Authenticator 应用）时，支持**自动重新登录**：
 
-- **服务启动 / WS 重连**时：cookie 过期、自动重登录发现需要 2FA，且邮箱 OTP 不可用（未启用或抓取失败）；
-- **服务运行中 API 返回 401**（运行期 cookie 过期）时：服务检测到 401 会自动触发重新登录，若需要 TOTP 同样进入 `needsTotp` 状态——**无需重启服务**。
+- **配置 `totp_secret`（推荐，全自动）**：在 `credentials.json` 中新增 `totp_secret` 字段，填入 Authenticator 应用的 otpauth:// URI 或 base32 密钥（登录 VRChat 官网 → 安全设置 → 2FA 重新配置时显示，或从 Authenticator 应用导出）。服务在启动登录、运行期 API 401 自动重认证、WS 重连时，都会用 RFC 6238 本地生成验证码自动完成登录，**全程无需人工干预**。`/health` 的 `auth.totpAutoEnabled` 为 `true` 表示已启用自动 TOTP。
+- **未配置 `totp_secret`（手动兜底）**：以下情况会进入 `needsTotp` 状态（`/health` 的 `auth.needsTotp` 为 `true`，或日志提示调用 `submit_totp`）：
+  - 服务启动 / WS 重连：cookie 过期、自动重登录发现需要 2FA，且邮箱 OTP 不可用（未启用或抓取失败）；
+  - 服务运行中 API 返回 401（运行期 cookie 过期）：服务检测到 401 会自动触发重新登录，若需要 TOTP 同样进入 `needsTotp` 状态——**无需重启服务**。
 
-此时：
+手动提交流程：
 1. 服务已保留待验证的临时会话，**只差验证码**；
 2. Agent（或用户）打开 Authenticator 应用查看当前 6 位验证码；
 3. 调用 MCP 工具 `submit_totp { code: "123456" }` 完成登录，WebSocket 会自动重连上线。
 
 注意：
-- 账号**同时启用邮箱 OTP 与 TOTP** 时，服务优先走邮箱 OTP 自动抓取，仅在邮箱抓取失败时才兜底转为需要 TOTP 手动提交；
-- 账号**仅启用 TOTP** 时，服务不会尝试邮箱，直接等待 `submit_totp`；
-- 验证码每 30 秒变化，过期需重新获取；提交失败后临时会话保留，可再次提交；
+- 账号**同时启用邮箱 OTP 与 TOTP** 时，自动通道优先级：邮箱 OTP 抓取 → 自动 TOTP 兜底 → 手动 `submit_totp`；
+- 账号**仅启用 TOTP** 且已配置 `totp_secret` 时，服务自动生成验证码登录，不进入 `needsTotp`；
+- 自动 TOTP 提交失败（验证码被拒 / secret 有误）会冷却 30 秒等待下一个 TOTP 窗口后自动重试，并转为 `needsTotp` 状态供手动兜底；`totp_secret` 解析失败时启动会告警并回退手动模式，不阻断服务；
+- 验证码每 30 秒变化；`totp_secret` 与密码同等敏感（存 `credentials.json`，已被 .gitignore 排除），严禁泄露；
 - 运行期 401 自动重登录失败（非 TOTP 原因，如网络/凭据错误）会冷却 60 秒再重试，不会高频刷认证接口。
 
 ### 代理说明

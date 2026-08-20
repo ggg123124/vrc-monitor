@@ -28,6 +28,7 @@ export class VrchatApiClient {
     this._cookiePath = '';
     this.#authLock = null;       // single-flight lock for ensureAuth / ensureAuthWithAutoOtp
     this.otpFetcher = null;        // 注入邮箱 OTP 自动获取函数（用于 401 自动重认证）
+    this.totpFetcher = null;       // 注入 TOTP 验证码自动生成函数（credentials.json 配置 totp_secret 后启用）
     this._reauthInFlight = false;  // 防止并发 401 重认证
     this._reauthCooldownUntil = 0; // 非 TOTP 重认证失败后的冷却（防循环）
   }
@@ -35,6 +36,11 @@ export class VrchatApiClient {
   /** 注入邮箱 OTP 获取函数（start-monitor.js 启动时调用） */
   setOtpFetcher(fn) {
     this.otpFetcher = fn;
+  }
+
+  /** 注入 TOTP 验证码自动生成函数（配置 totp_secret 后启用自动登录） */
+  setTotpFetcher(fn) {
+    this.totpFetcher = fn;
   }
 
   loadCookieFromFile(path) {
@@ -100,7 +106,7 @@ export class VrchatApiClient {
     this._reauthInFlight = true;
     try {
       console.log('[VRChat API] ⚠️ 请求返回 401，尝试自动重新登录...');
-      if (this.otpFetcher) {
+      if (this.otpFetcher || this.totpFetcher) {
         await this.ensureAuthWithAutoOtp(this.otpFetcher);
       } else {
         // 无 otpFetcher（如测试/未注入场景）：仍解析 2FA 类型，
@@ -423,13 +429,24 @@ export class VrchatApiClient {
     }
   }
 
+  /** 自动生成并提交 TOTP 验证码完成登录；失败抛错（无 needsTotp 标记，由调用方决定是否转手动） */
+  async _autoTotpLogin() {
+    if (!this.totpFetcher) throw new Error('未配置 TOTP fetcher');
+    const totpCode = await this.totpFetcher();
+    if (!totpCode || !/^\d{6,8}$/.test(String(totpCode))) {
+      throw new Error(`无效的 TOTP 验证码: "${totpCode}"`);
+    }
+    return await this.loginWithTotp(String(totpCode));
+  }
+
   async _doEnsureAuthWithAutoOtp(otpFetcher) {
     try {
       return await this._doEnsureAuth();
     } catch (err) {
       if (!err.needsOtp) throw err;
 
-      // 根据账号启用的 2FA 类型分流：含 emailOtp 优先邮箱自动抓取；仅 totp 需 submit_totp 手动提交
+      // 根据账号启用的 2FA 类型分流：含 emailOtp 优先邮箱自动抓取；
+      // 仅 totp 时若配置了 totp_secret 则自动生成验证码，否则转 submit_totp 手动提交
       const types = this.pending2faTypes || [];
       const needEmailOtp = types.includes('emailOtp');
       const needTotp = types.includes('totp');
@@ -443,8 +460,21 @@ export class VrchatApiClient {
           }
           return await this.loginWithOtp(String(otpCode));
         } catch (otpErr) {
-          // 邮箱抓取失败：若账号也支持 TOTP，兜底转手动提交（保留 tempAuthCookie）
+          // 邮箱抓取失败：若账号也支持 TOTP，先试自动 TOTP 兜底，再转手动提交（保留 tempAuthCookie）
           if (needTotp) {
+            if (this.totpFetcher) {
+              console.log('[VRChat API] ⚠️ 邮箱验证码获取失败，尝试自动 TOTP 兜底...');
+              try {
+                const user = await this._autoTotpLogin();
+                console.log('[VRChat API] ✅ 自动 TOTP 兜底登录成功');
+                return user;
+              } catch (totpErr) {
+                const totpErr2 = new Error(`邮箱与自动 TOTP 均失败(${totpErr.message})，请调用 submit_totp 工具提交验证码`);
+                totpErr2.needsTotp = true;
+                totpErr2.needsOtp = true;
+                throw totpErr2;
+              }
+            }
             const totpErr = new Error(`邮箱验证码获取失败(${otpErr.message})，请调用 submit_totp 工具提交 TOTP 验证码`);
             totpErr.needsTotp = true;
             totpErr.needsOtp = true;
@@ -457,8 +487,23 @@ export class VrchatApiClient {
       }
 
       if (needTotp) {
-        // 仅 TOTP：保留 tempAuthCookie，等待 submit_totp 工具提交验证码
-        const totpErr = new Error('账号启用 TOTP 两步验证，请调用 submit_totp 工具提交当前验证码');
+        if (this.totpFetcher) {
+          console.log('[VRChat API] ⚠️ 需要 TOTP 验证码，自动生成中...');
+          try {
+            const user = await this._autoTotpLogin();
+            console.log('[VRChat API] ✅ TOTP 自动登录成功');
+            return user;
+          } catch (totpErr) {
+            // 自动失败：保留 tempAuthCookie 转手动 submit_totp 兜底；冷却等待下一个 TOTP 窗口再自动重试
+            this._reauthCooldownUntil = Date.now() + 30_000;
+            const totpErr2 = new Error(`TOTP 自动登录失败(${totpErr.message})，请调用 submit_totp 工具提交当前验证码或检查 totp_secret`);
+            totpErr2.needsTotp = true;
+            totpErr2.needsOtp = true;
+            throw totpErr2;
+          }
+        }
+        // 未配置 totp_secret：保留 tempAuthCookie，等待 submit_totp 工具提交验证码
+        const totpErr = new Error('账号启用 TOTP 两步验证，请调用 submit_totp 工具提交当前验证码（或在 credentials.json 配置 totp_secret 启用自动登录）');
         totpErr.needsTotp = true;
         totpErr.needsOtp = true;
         throw totpErr;

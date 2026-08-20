@@ -108,14 +108,15 @@ export class WsManager {
       try {
         await this.api.ensureAuth();
       } catch (authErr) {
-        if (authErr.needsOtp && this.otpFetcher) {
-          console.log('[WS] ⚠️ 认证需要 OTP，尝试自动获取...');
+        // 自动 2FA 通道：邮箱 OTP（otpFetcher）或 TOTP（api.totpFetcher，配置 totp_secret 后启用）
+        if (authErr.needsOtp && (this.otpFetcher || this.api.totpFetcher)) {
+          console.log('[WS] ⚠️ 认证需要 2FA，尝试自动获取...');
           try {
             await this.api.ensureAuthWithAutoOtp(this.otpFetcher);
           } catch (otpErr) {
             if (otpErr.needsTotp) {
               ctx.serverState.needsTotp = true;
-              console.log('[WS] 🔑 账号需要 TOTP 验证码：请调用 MCP 工具 submit_totp 提交');
+              console.log('[WS] 🔑 账号需要 TOTP 验证码：自动登录未成功，可调用 MCP 工具 submit_totp 提交');
             }
             this._setAuthCooldown(otpErr);
             throw otpErr;

@@ -66,10 +66,10 @@ A: 国内网络可能需代理。服务自动直连 6s 失败后回退到本地�
 A: 检查 `credentials.json` 的 `imap_auth_code` 是否为正确的 IMAP 授权码（非登录密码）。服务会在认证失败后冷却 120s（限流 401 则 5min）自动重试。
 
 **Q: 账号启用了 Authenticator（TOTP）两步验证，无法自动登录？**
-A: 服务支持 TOTP：健康检查 `/health` 返回 `auth.needsTotp: true` 时，Agent 可调用 MCP 工具 `submit_totp` 提交当前 6 位验证码完成登录。账号同时启用邮箱 OTP 时会优先自动走邮箱；仅启用 TOTP 时等待手动提交。
+A: 支持自动登录：在 `credentials.json` 配置 `totp_secret`（Authenticator 的 otpauth:// URI 或 base32 密钥），服务用 RFC 6238 本地生成验证码，启动/运行期 401/WS 重连全程自动重登录（`/health` 的 `auth.totpAutoEnabled` 为 `true` 表示已启用）。未配置时，`/health` 返回 `auth.needsTotp: true` 后调用 MCP 工具 `submit_totp` 手动提交当前 6 位验证码。账号同时启用邮箱 OTP 时优先自动走邮箱；自动通道优先级：邮箱 OTP → 自动 TOTP → 手动 `submit_totp`。
 
 **Q: cookie 过期了要手动处理吗？**
-A: 不需要。服务启动和 WS 重连都会自动走 OTP 取码登录，有效 cookie 自动落盘 `auth_cookie.txt`。**运行中** API 返回 401（cookie 过期）时服务也会自动触发重新登录——若需要 TOTP 会进入 `needsTotp` 状态，调用 `submit_totp` 即可完成，无需重启服务。
+A: 不需要。服务启动和 WS 重连都会自动走 OTP 取码登录，有效 cookie 自动落盘 `auth_cookie.txt`。**运行中** API 返回 401（cookie 过期）时服务也会自动触发重新登录——若需要 TOTP 且配置了 `totp_secret` 会自动完成，否则进入 `needsTotp` 状态调用 `submit_totp` 即可，无需重启服务。
 
 **Q: 数据库文件太大？**
 A: 正常。约 30 万行事件 ≈ 300+ MB。better-sqlite3（WAL 模式）按需读取，不整库载入内存。

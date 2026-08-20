@@ -65,10 +65,10 @@ A: 中国国内のネットワーク環境ではプロキシが必要な場合�
 A: `credentials.json` の `imap_auth_code` が正しい IMAP 認証コードか（ログインパスワードではない）確認してください。認証失敗後は 120 秒（401 レート制限時は 5 分）のクールダウン後に自動再試行します。
 
 **Q: Authenticator（TOTP）二段階認証を有効にしていて自動ログインできない？**
-A: サービスは TOTP に対応しています：`/health` が `auth.needsTotp: true` を返す場合、Agent は MCP ツール `submit_totp` で現在の 6 桁コードを送信してログインを完了できます。メール OTP と TOTP の両方を有効にしている場合はメール OTP が優先され、TOTP のみのアカウントは手動送信を待ちます。
+A: 自動ログインに対応しています：`credentials.json` に `totp_secret`（Authenticator の otpauth:// URI または base32 キー）を設定すると、RFC 6238 でローカル生成したコードで起動時・実行中 401・WS 再接続を全て自動ログインします（有効時は `/health` の `auth.totpAutoEnabled: true`）。未設定の場合は `/health` が `auth.needsTotp: true` を返した際、MCP ツール `submit_totp` で現在の 6 桁コードを送信してログインを完了できます。自動チャネルの優先順位：メール OTP → 自動 TOTP → 手動 `submit_totp`。
 
 **Q: Cookie の期限切れは手動で対応が必要？**
-A: 不要です。サービス起動時と WS 再接続時に自動で OTP ログインを行い、有効な Cookie は `auth_cookie.txt` に自動保存されます。**実行中に** API が 401（Cookie 期限切れ）を返した場合も自動で再ログインを試みます。TOTP が必要な場合は `needsTotp` 状態になり、`submit_totp` を呼べば完了します（再起動不要）。
+A: 不要です。サービス起動時と WS 再接続時に自動で OTP ログインを行い、有効な Cookie は `auth_cookie.txt` に自動保存されます。**実行中に** API が 401（Cookie 期限切れ）を返した場合も自動で再ログインを試みます。TOTP が必要な場合、`totp_secret` を設定していれば自動で完了し、未設定なら `needsTotp` 状態になり `submit_totp` を呼べば完了します（再起動不要）。
 
 **Q: データベースファイルが大きすぎる？**
 A: 正常です。約 30 万イベント ≈ 300+ MB。better-sqlite3（WAL モード）はオンデマンド読み込みで、DB 全体をメモリに載せません。

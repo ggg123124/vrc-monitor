@@ -937,7 +937,7 @@ export const CUSTOM_TOOLS = [
   // ── 认证 ──
   {
     name: 'submit_totp',
-    description: '[认证] 账号启用 TOTP 两步验证时，服务会处于 needsTotp 状态（/health 可见）。调用本工具提交当前 Authenticator 应用的 6 位验证码完成登录。',
+    description: '[认证] 提交 TOTP 验证码完成登录。在 credentials.json 配置 totp_secret 后，服务会自动生成验证码登录（无需调用本工具）；本工具仅在自动登录失败（验证码被拒/secret 有误）时作为手动兜底。处于 needsTotp 状态（/health 可见）时调用本工具提交当前 Authenticator 应用的 6 位验证码。',
     inputSchema: {
       type: 'object',
       properties: {
