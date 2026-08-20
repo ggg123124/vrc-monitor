@@ -70,6 +70,9 @@ A: 自動ログインに対応しています：`credentials.json` に `totp_sec
 **Q: Cookie の期限切れは手動で対応が必要？**
 A: 不要です。サービス起動時と WS 再接続時に自動で OTP ログインを行い、有効な Cookie は `auth_cookie.txt` に自動保存されます。**実行中に** API が 401（Cookie 期限切れ）を返した場合も自動で再ログインを試みます。TOTP が必要な場合、`totp_secret` を設定していれば自動で完了し、未設定なら `needsTotp` 状態になり `submit_totp` を呼べば完了します（再起動不要）。
 
+**Q: ログイン失敗・手動対応が必要なときにどう知る？**
+A: オプションの**ログイン状態の通知**（issue #69）：`notify-config.example.json` を `notify-config.json` にコピーして `enabled: true` に設定すると、`needsTotp` 突入・メール OTP 取得失敗・実行中 401 自動再認証失敗・認証復旧の際にホストへ通知します（正常な自動ログイン成功時は通知しません）。`channels` は `desktop`（Linux notify-send / macOS osascript / Windows PowerShell toast）と `webhook`（webhook_url へ JSON を POST）に対応。`consecutive_fail_threshold`（既定 3）連続失敗して初めて通知し、`min_interval_sec`（既定 300）で防災。デスクトップ通知はシステム通知デーモン（Linux dunst/mako）が必要で、無い場合は静かに降格します。
+
 **Q: データベースファイルが大きすぎる？**
 A: 正常です。約 30 万イベント ≈ 300+ MB。better-sqlite3（WAL モード）はオンデマンド読み込みで、DB 全体をメモリに載せません。
 

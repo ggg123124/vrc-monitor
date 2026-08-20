@@ -6,6 +6,7 @@
  */
 
 import { ctx, log } from '../server-context.js';
+import { notifier } from '../notifier.js';
 
 export async function handleSubmitTotp({ code }) {
   const { api, serverState, wsManager } = ctx;
@@ -25,6 +26,7 @@ export async function handleSubmitTotp({ code }) {
     serverState.needsOtp = false;
     serverState.needsTotp = false;
     log(`🔐 TOTP 登录成功: ${user.displayName} (${user.id})`);
+    notifier.notifyAuth('recovered', 'TOTP 验证码提交成功，服务已恢复正常');
 
     // 登录成功后立即让 WebSocket 重连上线
     if (wsManager) {

@@ -3,6 +3,7 @@ credentials.json
 credentials.local.json
 auth_cookie.txt
 auth_cookie.txt.bak
+notify-config.json
 *.sqlite3
 *.sqlite3-journal
 monitor.log

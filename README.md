@@ -71,6 +71,9 @@ A: 支持自动登录：在 `credentials.json` 配置 `totp_secret`（Authentica
 **Q: cookie 过期了要手动处理吗？**
 A: 不需要。服务启动和 WS 重连都会自动走 OTP 取码登录，有效 cookie 自动落盘 `auth_cookie.txt`。**运行中** API 返回 401（cookie 过期）时服务也会自动触发重新登录——若需要 TOTP 且配置了 `totp_secret` 会自动完成，否则进入 `needsTotp` 状态调用 `submit_totp` 即可，无需重启服务。
 
+**Q: 服务登录失败/需要人工介入时怎么知道？**
+A: 可配置**登录状态主动通知**（issue #69）：复制 `notify-config.example.json` 为 `notify-config.json` 并设 `enabled: true`，服务在进入 `needsTotp`、邮箱 OTP 抓取失败、运行期 401 自动重认证失败、认证恢复时主动提醒宿主（正常自动登录不通知）。`channels` 支持 `desktop`（Linux notify-send / macOS osascript / Windows PowerShell toast）与 `webhook`（POST JSON 到 webhook_url）。连续失败达 `consecutive_fail_threshold`（默认 3）才通知，`min_interval_sec`（默认 300）防刷屏。桌面通知需系统通知守护（Linux dunst/mako），无守护时静默降级不崩服务。
+
 **Q: 数据库文件太大？**
 A: 正常。约 30 万行事件 ≈ 300+ MB。better-sqlite3（WAL 模式）按需读取，不整库载入内存。
 

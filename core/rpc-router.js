@@ -6,6 +6,7 @@
  */
 
 import { ctx, log } from './server-context.js';
+import { notifier } from './notifier.js';
 import { CUSTOM_TOOLS } from './mcp-definitions.js';
 import { sendSSE, sendError } from './http-server.js';
 
@@ -517,6 +518,7 @@ export async function handleRpc(rpc, session, res) {
         if (err.needsTotp) {
           ctx.serverState.needsTotp = true;
           log('🔑 检测到需要 TOTP 验证码，请调用 submit_totp 完成登录');
+          notifier.notifyAuth('needsTotp', '运行期会话失效需 TOTP 验证码，服务暂停——请调用 submit_totp 提交当前验证码');
         }
         log(`❌ ${name} failed: ${err.message}`);
         sendError(res, id, err.message);

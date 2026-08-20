@@ -263,6 +263,22 @@ VRChat 账号启用 **TOTP 两步验证**（Authenticator 应用）时，支持*
 - 验证码每 30 秒变化；`totp_secret` 与密码同等敏感（存 `credentials.json`，已被 .gitignore 排除），严禁泄露；
 - 运行期 401 自动重登录失败（非 TOTP 原因，如网络/凭据错误）会冷却 60 秒再重试，不会高频刷认证接口。
 
+### 登录状态主动通知（issue #69）
+
+服务是无人值守的后台进程，登录结果默认只写日志。可配置**主动通知**，在「需要人工介入 / 异常」时提醒宿主（正常自动登录成功不通知，避免噪音）：
+
+- **配置**：复制 `notify-config.example.json` 为 `notify-config.json`（已被 .gitignore 排除），设置 `enabled: true`。
+- **通道**：`channels` 数组支持 `desktop`（Linux `notify-send` / macOS `osascript` / Windows PowerShell toast）与 `webhook`（POST JSON 到 `webhook_url`，群机器人/push 服务）。桌面通知依赖系统通知守护（如 Linux dunst/mako），无守护时静默降级不崩服务。
+- **触发事件**：进入 `needsTotp` 待验证、邮箱 OTP 抓取失败、运行期 401 自动重认证失败、认证恢复（闭合「正常→异常→恢复」循环）。
+- **去抖防刷屏**：`consecutive_fail_threshold`（默认 3）连续失败达此数才通知；`min_interval_sec`（默认 300）同类型通知最小间隔。
+- **默认关闭**：缺文件或 `enabled:false` 时完全不通知，不影响服务。
+- 配置示例：
+  ```json
+  { "enabled": true, "channels": ["desktop", "webhook"],
+    "webhook_url": "https://example.com/hook",
+    "consecutive_fail_threshold": 3, "min_interval_sec": 300 }
+  ```
+
 ### 代理说明
 
 如需通过代理访问 VRChat API，请在启动前设置 `HTTPS_PROXY` 或 `HTTP_PROXY` 环境变量。WebSocket 连接默认直连，6 秒超时后自动回退到代理（默认 `127.0.0.1:7892`，可用 `VRC_MONITOR_WS_PROXY` 环境变量覆盖）。

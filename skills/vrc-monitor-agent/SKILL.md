@@ -165,6 +165,10 @@ boop 通知落库的顶层事件类型是 `notification-v2`（不是 boop），b
 - QQ 邮箱有"自动分类"功能会把验证码邮件归档到分类文件夹（IMAP 名含 `VRChat`，modified UTF-7 编码）——fetch-otp.py 已带文件夹遍历兜底，若 OTP 一直失败先想到这个
 - 认证失败有 120s 冷却，401 限流 5min 冷却，会自愈
 
+### 登录状态主动通知（issue #69）
+
+无人值守服务默认只写日志。可配置 `notify-config.json`（复制 `notify-config.example.json`）开启主动通知：在「需人工介入/异常」时（进入 needsTotp、邮箱 OTP 抓取失败、运行期 401 自动重认证失败、认证恢复）提醒宿主，正常自动登录不通知。`channels` 支持 `desktop`（Linux notify-send / macOS osascript / Windows PowerShell toast）与 `webhook`（POST JSON 到 webhook_url）。去抖：连续失败达 `consecutive_fail_threshold`（默认 3）且距上次通知超 `min_interval_sec`（默认 300）才发送。默认关闭，缺文件或 enabled:false 不影响服务。桌面通知需系统通知守护（Linux dunst/mako），无守护时静默降级不崩服务。
+
 ### 代理（国内网络）
 
 WebSocket 直连失败 6s 后自动回退到本地代理（默认 `127.0.0.1:7892`，可在代码/环境变量中修改）。若 HTTP 请求报 502 且本机开了系统代理，设 `NO_PROXY=127.0.0.1,localhost` 环境变量。

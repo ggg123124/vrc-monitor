@@ -1,0 +1,8 @@
+{
+  "enabled": false,
+  "channels": ["desktop", "webhook"],
+  "webhook_url": "https://example.com/hook",
+  "consecutive_fail_threshold": 3,
+  "min_interval_sec": 300,
+  "_comment": "登录状态主动通知配置（issue #69）。复制本文件为 notify-config.json 并修改。enabled=false 时完全关闭通知；channels 支持 desktop（Linux notify-send / macOS osascript / Windows PowerShell toast；桌面通知需系统通知守护，如 Linux dunst/mako，无守护时静默降级不崩服务）与 webhook（POST JSON 到 webhook_url）；consecutive_fail_threshold：OTP/重认证连续失败达此数才通知；min_interval_sec：同类型通知最小间隔（秒）防刷屏。"
+}

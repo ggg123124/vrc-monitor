@@ -70,6 +70,9 @@ A: Auto-login is supported: add `totp_secret` to `credentials.json` (the Authent
 **Q: Do I need to handle expired cookies manually?**
 A: No. Service startup and WS reconnects automatically go through OTP login, and the valid cookie is persisted to `auth_cookie.txt`. During runtime, when the API returns 401 (cookie expired), the service also auto-triggers re-login — if TOTP is required and `totp_secret` is configured it completes automatically; otherwise it enters `needsTotp` state and you call `submit_totp`, no restart needed.
 
+**Q: How do I know when login fails or manual action is needed?**
+A: Optional **login status notifications** (issue #69): copy `notify-config.example.json` to `notify-config.json` and set `enabled: true`. The service proactively notifies the host on entering `needsTotp`, email OTP fetch failure, runtime-401 auto re-auth failure, and auth recovery (no notification on normal auto-login success). `channels` support `desktop` (Linux notify-send / macOS osascript / Windows PowerShell toast) and `webhook` (POST JSON to `webhook_url`). It only notifies after `consecutive_fail_threshold` (default 3) consecutive failures, with `min_interval_sec` (default 300) anti-spam. Desktop notifications require a system notification daemon (Linux dunst/mako); silently degrade without one.
+
 **Q: The database file is too big?**
 A: Normal. ~300K events ≈ 300+ MB. better-sqlite3 (WAL mode) reads on demand and never loads the whole DB into memory.
 
