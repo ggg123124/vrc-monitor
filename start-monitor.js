@@ -190,12 +190,14 @@ async function main() {
   if (creds.totp_secret) {
     try {
       const { secretBytes, digits, period, algorithm } = parseTotpSecret(creds.totp_secret);
+      // 利用前后窗口容错（审核 #70 🟡 建议 2）：返回 [前窗口, 当前, 后窗口] 三窗口验证码，
+      // 由 _autoTotpLogin 依次尝试，容忍时钟漂移/窗口轮换（getTotpCodes count=1）
       totpFetcher = () => {
         const counter = Math.floor(Math.floor(Date.now() / 1000) / period);
-        return generateTotp(secretBytes, counter, { digits, algorithm });
+        return [counter - 1, counter, counter + 1].map((c) => generateTotp(secretBytes, c, { digits, algorithm }));
       };
       ctx.api.setTotpFetcher(totpFetcher);
-      log(`   🔐 TOTP 自动登录已启用（digits=${digits}, period=${period}s, ${algorithm}）`);
+      log(`   🔐 TOTP 自动登录已启用（digits=${digits}, period=${period}s, ${algorithm}，前后窗口容错）`);
     } catch (parseErr) {
       console.error(`   ⚠️ totp_secret 解析失败（${parseErr.message}）：TOTP 自动登录不可用，将回退手动 submit_totp`);
     }

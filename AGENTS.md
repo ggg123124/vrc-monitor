@@ -246,7 +246,7 @@ Agent 在配置、使用、维护本软件过程中，若发现原始代码存�
 
 VRChat 账号启用 **TOTP 两步验证**（Authenticator 应用）时，支持**自动重新登录**：
 
-- **配置 `totp_secret`（推荐，全自动）**：在 `credentials.json` 中新增 `totp_secret` 字段，填入 Authenticator 应用的 otpauth:// URI 或 base32 密钥（登录 VRChat 官网 → 安全设置 → 2FA 重新配置时显示，或从 Authenticator 应用导出）。服务在启动登录、运行期 API 401 自动重认证、WS 重连时，都会用 RFC 6238 本地生成验证码自动完成登录，**全程无需人工干预**。`/health` 的 `auth.totpAutoEnabled` 为 `true` 表示已启用自动 TOTP。
+- **配置 `totp_secret`（推荐，全自动）**：在 `credentials.json` 中新增 `totp_secret` 字段，填入 Authenticator 应用的 otpauth:// URI 或 base32 密钥（登录 VRChat 官网 → 安全设置 → 2FA 重新配置时显示，或从 Authenticator 应用导出）。服务在启动登录、运行期 API 401 自动重认证、WS 重连时，都会用 RFC 6238 本地生成验证码自动完成登录（自动尝试前后窗口容错时钟漂移/窗口轮换），**全程无需人工干预**。`/health` 的 `auth.totpAutoEnabled` 为 `true` 表示已启用自动 TOTP。
 - **未配置 `totp_secret`（手动兜底）**：以下情况会进入 `needsTotp` 状态（`/health` 的 `auth.needsTotp` 为 `true`，或日志提示调用 `submit_totp`）：
   - 服务启动 / WS 重连：cookie 过期、自动重登录发现需要 2FA，且邮箱 OTP 不可用（未启用或抓取失败）；
   - 服务运行中 API 返回 401（运行期 cookie 过期）：服务检测到 401 会自动触发重新登录，若需要 TOTP 同样进入 `needsTotp` 状态——**无需重启服务**。

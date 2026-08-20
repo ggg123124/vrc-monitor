@@ -56,6 +56,17 @@ export function parseTotpSecret(input) {
     if (p) period = parseInt(p, 10);
     if (a) algorithm = a.toUpperCase();
     if (!secretB32) throw new Error('otpauth URI 缺少 secret 参数');
+    // 参数合法性校验（审核 #70 🟡 建议 3）：digits 6-8 位、period 正整数、algorithm 受支持的 HMAC 算法
+    if (!Number.isInteger(digits) || digits < 6 || digits > 8) {
+      throw new Error(`无效的 digits: "${d}"（应为 6-8 位整数）`);
+    }
+    if (!Number.isInteger(period) || period <= 0) {
+      throw new Error(`无效的 period: "${p}"（应为正整数秒）`);
+    }
+    const SUPPORTED = ['SHA1', 'SHA256', 'SHA512'];
+    if (!SUPPORTED.includes(algorithm)) {
+      throw new Error(`不支持的 algorithm: "${a}"（支持 ${SUPPORTED.join('/')}）`);
+    }
   } else {
     secretB32 = str;
   }

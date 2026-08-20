@@ -432,11 +432,22 @@ export class VrchatApiClient {
   /** 自动生成并提交 TOTP 验证码完成登录；失败抛错（无 needsTotp 标记，由调用方决定是否转手动） */
   async _autoTotpLogin() {
     if (!this.totpFetcher) throw new Error('未配置 TOTP fetcher');
-    const totpCode = await this.totpFetcher();
-    if (!totpCode || !/^\d{6,8}$/.test(String(totpCode))) {
-      throw new Error(`无效的 TOTP 验证码: "${totpCode}"`);
+    // totpFetcher 返回单个验证码或数组（[前窗口, 当前, 后窗口] 容错时钟漂移，审核 #70 🟡 建议 2）
+    const codes = await this.totpFetcher();
+    const candidates = Array.isArray(codes) ? codes : [codes];
+    let lastErr = null;
+    for (const code of candidates) {
+      if (!code || !/^\d{6,8}$/.test(String(code))) {
+        lastErr = new Error(`无效的 TOTP 验证码: "${code}"`);
+        continue;
+      }
+      try {
+        return await this.loginWithTotp(String(code));
+      } catch (err) {
+        lastErr = err; // 该窗口验证码被拒，尝试下一窗口
+      }
     }
-    return await this.loginWithTotp(String(totpCode));
+    throw lastErr || new Error('无可用 TOTP 验证码');
   }
 
   async _doEnsureAuthWithAutoOtp(otpFetcher) {
@@ -469,6 +480,8 @@ export class VrchatApiClient {
                 console.log('[VRChat API] ✅ 自动 TOTP 兜底登录成功');
                 return user;
               } catch (totpErr) {
+                // 邮箱与自动 TOTP 双失败：补冷却等待下个窗口（与仅 TOTP 分支对称，审核 #70 🟡 建议 1）
+                this._reauthCooldownUntil = Date.now() + 30_000;
                 const totpErr2 = new Error(`邮箱与自动 TOTP 均失败(${totpErr.message})，请调用 submit_totp 工具提交验证码`);
                 totpErr2.needsTotp = true;
                 totpErr2.needsOtp = true;
