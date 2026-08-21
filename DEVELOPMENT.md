@@ -127,14 +127,14 @@ PR 由 AI Agent 编写提交（人类只提出需求、不直接编码）。以�
 - **语言**：JavaScript，ESM（`package.json` 中 `"type": "module"`）。
 - **Node 版本**：≥ 18（better-sqlite3 v12 的要求；本地开发推荐 22.x）。`package.json` 已声明 `engines` 字段约束。
 - **风格**：跟随现有代码风格（`start-monitor.js` 薄入口与 `core/` 下的模块 + `core/handlers/` 下的 handler）。
-- **模块划分**：`start-monitor.js` 约 200 行薄入口，新增功能放 `core/` 下独立模块（参考 `storage.js` / `ws-manager.js` / `server-context.js` / `mcp-definitions.js` 的拆分方式）。MCP 工具 handler 放 `core/handlers/` 子目录，按功能域分拆文件（参考 `recommend.js` / `friends.js` / `events.js` / `groups.js` / `media.js` / `misc.js` / `instance.js`），通过 `ctx` 共享上下文访问运行时状态。RPC 分发在 `core/rpc-router.js`，HTTP 服务在 `core/http-server.js`。
+- **模块划分**：`start-monitor.js` 约 360 行薄入口，新增功能放 `core/` 下独立模块（参考 `storage.js` / `ws-manager.js` / `server-context.js` / `mcp-definitions.js` 的拆分方式）。MCP 工具 handler 放 `core/handlers/` 子目录，按功能域分拆文件（参考 `recommend.js` / `friends.js` / `events.js` / `groups.js` / `media.js` / `misc.js` / `instance.js`），通过 `ctx` 共享上下文访问运行时状态。RPC 分发在 `core/rpc-router.js`，HTTP 服务在 `core/http-server.js`。
 - **平台专属逻辑**：Windows 专属增强（命名管道等）一律封装进 `core/` 独立模块，运行时探测 + 静默回退（见 §3.1），禁止散落在 CLI 脚本或 MCP handler 里。
 - **新功能默认做成 MCP 工具，禁止只写孤立 CLI 脚本**（2026-08-09 用户要求固化）：本项目面向 AI Agent，Agent 通过 MCP 接口（`tools/call`）与功能交互；独立脚本无法被 Agent 直接调用，等于功能不可达。开发要求：
   - 新功能的标准形态是注册 MCP 工具（工具定义在 `core/mcp-definitions.js` + handler 函数在 `core/handlers/` 对应文件 + RPC case 在 `core/rpc-router.js` 三件套），Agent 一条 `tools/call` 即可使用。
   - 若确需保留独立入口（如 CLI 脚本 / 定时任务），**核心逻辑必须抽到 `core/` 下的共享模块**，CLI 与 MCP handler 双复用——禁止同一逻辑在两处各写一份（2026-08-09 实操：`new-worlds-tracker.mjs` 的拉取/过滤/评分/分类逻辑抽到 `core/new-worlds.js`，CLI 降级为薄封装；2026-08-10 该 CLI 薄封装已被移除，功能仅保留 MCP 工具形态，规范得到验证）。
   - MCP handler **复用主服务登录态**（`ctx.serverState.authUser` + `ctx.api` 实例），不要重复实现登录 / OTP / 凭据读取（参考 `handleGetWeeklyReport`）；只有独立 CLI 场景才自带认证。
   - 数据库读写走 `storage`（`_query` / `_run` / `db.transaction`），建表沿用 `core/init-db.sql` 幂等写法。
-  - 文档同步：新增工具后 README / AGENTS.md / `skills/vrc-monitor-agent/SKILL.md` 三处工具表 + 工具数必须同步（`grep '个工具'` 核对）。
+  - 文档同步：新增工具必须登记进 `skills/vrc-monitor-agent/SKILL.md`「MCP 工具」章节（**唯一权威工具表**，2026-08-15 决策，避免多表重复维护）；README 的 MCP 工具段与 AGENTS.md 工具列举为采样说明，新增工具后顺带核对（工具清单漂移检测用 `python3 scripts/check-doc-drift.py`）。
   - **限流不要嵌套**（2026-08-09 真实死锁事故）：handler 内部逐请求 `rateLimiter.execute` 时，RPC case 层**不要再包一层** `rateLimiter.execute`——外层执行时 `_processing=true`，内层请求永远排不上队，整个 handler 挂死（`scan_new_worlds` 首版即如此，120s 超时；修复：case 层裸调，内部已逐请求限流）。
 - **错误处理**：异步路径必须有 try/catch 或 Promise 拒绝处理；WebSocket 消息处理不得因单条消息异常导致服务中断。
 - **日志**：沿用现有 `log()` 输出风格（中文 + emoji），不引入额外日志库。

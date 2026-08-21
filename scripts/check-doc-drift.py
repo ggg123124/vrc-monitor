@@ -163,7 +163,7 @@ def gh_all_pr_states():
         r = subprocess.run(
             ["gh", "pr", "list", "--state", "all", "--limit", "100",
              "--json", "number,state,mergedAt",
-             "--jq", '.[] | "\(.number)|\(.state)|\(.mergedAt // "")"'],
+             "--jq", r'.[] | "\(.number)|\(.state)|\(.mergedAt // "")"'],
             capture_output=True, text=True, timeout=30,
         )
         if r.returncode != 0:
@@ -272,7 +272,7 @@ def check_skills_consistency(code_tools):
     # 2. README 提及的 skill 名（skills/<name> 或 `<name>` 紧邻 skills/ 的写法）
     readme = read_text("README.md") or ""
     readme_mentions = set(re.findall(r"skills/([a-z0-9-]+)", readme))
-    readme_mentions |= set(re.findall(r"`([a-z0-9-]+)`[^`]*?skill", readme, re.IGNORECASE))
+    readme_mentions |= set(re.findall(r"`([a-z0-9-]+)`[^`\n]*?skill", readme, re.IGNORECASE))
     # 反向：目录里有但 README 完全没提（新增 skill 漏登记）
     if result["skills_dir"]:
         mentioned = set(result["skills_dir"])

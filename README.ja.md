@@ -27,11 +27,11 @@
 
 ## クイックスタート
 
-**前提条件**：Node.js ≥ 18、VRChat アカウント（メール 2FA 有効）、IMAP 対応メール（OTP コード受信用）。
+**前提条件**：Node.js ≥ 18、VRChat アカウント（メール OTP または TOTP 二段階認証を有効化）。メール OTP ログイン時のみ IMAP 対応メール（OTP コード受信用）が必要です。
 
-1. リポジトリをクローンし、`credentials.example.json` を `credentials.json` にコピーして VRChat アカウントとメールの IMAP 認証コードを記入
+1. リポジトリをクローンし、`credentials.example.json` を `credentials.json` にコピーして VRChat アカウントを記入；認証は二択——メール OTP なら IMAP 認証コード、または `totp_secret` を設定して TOTP 自動ログイン
 2. サービス起動：`node start-monitor.js`
-3. 確認：`curl http://127.0.0.1:8799/health` が `Auth: true`、`WS: connected` を返す
+3. 確認：`curl http://127.0.0.1:8799/health` が JSON で `auth.authenticated: true`、`ws.status: connected` を返す
 
 > 完全な設定（認証情報、環境変数、自動起動、プラグイン導入）は AI エージェントに [AGENTS.md](./AGENTS.md) に従って実行させてください——あなたが行うのはアカウントの提供と受け入れだけです。
 
@@ -47,8 +47,9 @@
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | システムアーキテクチャ：データフロー、モジュール責務、依存関係 | コードベース理解時 |
 | [docs/history/](./docs/history/INDEX.md) | プロジェクト進化史：マイルストーン、月次リリース/PR とその意義 | 新規エージェントは最初に読む |
 | [service-windows/](./service-windows/README.md) | Windows 自動起動 + クラッシュ自己復旧 + 毎日修復レポート（ワンクリックスクリプト） | Windows で常駐運用する場合 |
+| [service-linux/](./service-linux/README.md) | Linux systemd ユーザーサービス：自動起動 + クラッシュ自己復旧 + journal ログ（ワンクリックスクリプト） | Linux で常駐運用する場合 |
 
-**MCP ツール**：サービスはフレンド照会、ソーシャル操作、メディア管理、グループ操作、ワールドレコメンド、アセット検索などの分野をカバーする MCP ツールを公開しています。**完全なツール一覧（全ツール）は [skills/vrc-monitor-agent/SKILL.md](./skills/vrc-monitor-agent/SKILL.md) の「MCP ツール」セクションに統一登録されています**——エージェントはそこから呼び出します。他の skill は各分野のワークフロー補助です（ツールの重複登録はしません）：`booth-query-display`（BOOTH 検索/表示）、`vrc-monitor-companion-query`（同インスタンスクエリ）、`vrchat-assistant-development`（開発ガイドライン）。
+**MCP ツール**：サービスはフレンド照会、ソーシャル操作、メディア管理、グループ操作、ワールドレコメンド、アセット検索などの分野をカバーする MCP ツールを公開しています。**完全なツール一覧（全ツール）は [skills/vrc-monitor-agent/SKILL.md](./skills/vrc-monitor-agent/SKILL.md) の「MCP ツール」セクションに統一登録されています**——エージェントはそこから呼び出します。他の skill は各分野のワークフロー補助です（ツールの重複登録はしません）：`vrchat-social-queries`（ソーシャル：オンライン/同インスタンス/パターン/ニックネーム）、`vrchat-world-queries`（ワールド：待逛/レコメンド/情報探索）、`vrchat-group-queries`（グループ：照会/アナウンス）、`booth-query-display`（BOOTH 検索/表示）、`vrchat-assistant-development`（開発ガイドライン）、`review-workflow`（PR/issue レビューワークフロー）。
 
 ## 🧰 補助ツール（ローカル・任意）
 

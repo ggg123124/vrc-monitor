@@ -27,11 +27,11 @@ This project is **AI-first**: it is built for AI agents to use and extend. Human
 
 ## Quick Start
 
-**Prerequisites**: Node.js ≥ 18, a VRChat account (with email 2FA enabled), and an IMAP-capable email (to receive OTP codes).
+**Prerequisites**: Node.js ≥ 18 and a VRChat account (with email OTP or TOTP 2FA enabled). An IMAP-capable email (to receive OTP codes) is only required when using email OTP login.
 
-1. Clone the repo, copy `credentials.example.json` to `credentials.json`, and fill in your VRChat account and email IMAP authorization code
+1. Clone the repo, copy `credentials.example.json` to `credentials.json`, and fill in your VRChat account; choose one auth method — email IMAP authorization code for email OTP, or configure `totp_secret` for automatic TOTP login
 2. Start the service: `node start-monitor.js`
-3. Verify: `curl http://127.0.0.1:8799/health` returns `Auth: true` and `WS: connected`
+3. Verify: `curl http://127.0.0.1:8799/health` returns `auth.authenticated: true` and `ws.status: connected`
 
 > For the full configuration (credentials, environment variables, auto-start, plugin installation), have an AI agent follow [AGENTS.md](./AGENTS.md) — you only need to provide your account and accept the result.
 
@@ -47,8 +47,9 @@ This project is **AI-first**: it is built for AI agents to use and extend. Human
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | System architecture: data flow, module responsibilities, dependencies | Understanding the codebase |
 | [docs/history/](./docs/history/INDEX.md) | Project evolution history: milestone timeline, monthly releases/PRs and their significance | New agents should read first |
 | [service-windows/](./service-windows/README.md) | Windows auto-start + crash recovery + daily repair reports (one-click script) | Running persistently on Windows |
+| [service-linux/](./service-linux/README.md) | Linux systemd user service: auto-start + crash recovery + journal logs (one-click script) | Running persistently on Linux |
 
-**MCP Tools**: the service exposes MCP tools covering friend queries, social interactions, media management, group operations, world recommendations, asset search, and more. **The complete tool list (all tools) is registered in the [skills/vrc-monitor-agent/SKILL.md](./skills/vrc-monitor-agent/SKILL.md) "MCP Tools" section** — agents call tools from there. The other skills provide workflow guidance per capability (without re-listing tools): `booth-query-display` (BOOTH search/display), `vrc-monitor-companion-query` (companion queries), `vrchat-assistant-development` (development guidelines).
+**MCP Tools**: the service exposes MCP tools covering friend queries, social interactions, media management, group operations, world recommendations, asset search, and more. **The complete tool list (all tools) is registered in the [skills/vrc-monitor-agent/SKILL.md](./skills/vrc-monitor-agent/SKILL.md) "MCP Tools" section** — agents call tools from there. The other skills provide workflow guidance per capability (without re-listing tools): `vrchat-social-queries` (social: online/companions/patterns/nicknames), `vrchat-world-queries` (worlds: backlog/recommend/lore), `vrchat-group-queries` (groups: queries/announcements), `booth-query-display` (BOOTH search/display), `vrchat-assistant-development` (development guidelines), `review-workflow` (PR/issue review workflow).
 
 ## 🧰 Auxiliary Tools (local, optional)
 

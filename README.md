@@ -27,11 +27,11 @@
 
 ## 快速开始
 
-**前置条件**：Node.js ≥ 18、一个 VRChat 账号（开启邮箱 2FA）、一个支持 IMAP 的邮箱（接收 OTP 验证码）。
+**前置条件**：Node.js ≥ 18、一个 VRChat 账号（开启邮箱 OTP 或 TOTP 两步验证）。仅用邮箱 OTP 登录时才需要支持 IMAP 的邮箱（接收验证码）。
 
-1. 克隆仓库，复制 `credentials.example.json` 为 `credentials.json`，填入 VRChat 账号与邮箱 IMAP 授权码
+1. 克隆仓库，复制 `credentials.example.json` 为 `credentials.json`，填入 VRChat 账号；认证二选一——邮箱 OTP 登录填邮箱 IMAP 授权码，或配置 `totp_secret` 走 TOTP 自动登录
 2. 启动服务：`node start-monitor.js`
-3. 验证：`curl http://127.0.0.1:8799/health` 返回 `Auth: true`、`WS: connected`
+3. 验证：`curl http://127.0.0.1:8799/health` 返回 JSON 中 `auth.authenticated` 为 `true`、`ws.status` 为 `connected`
 
 > 完整的凭据、环境变量、开机自启、插件安装等配置步骤，交给 AI Agent 按 [AGENTS.md](./AGENTS.md) 自动完成即可——你只需要提供账号和验收。
 
