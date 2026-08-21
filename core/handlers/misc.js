@@ -28,21 +28,39 @@ export function handleGetDatabaseStats() {
  */
 export async function ensureWorldKbInfo({ storage, api, rateLimiter }, worldId) {
   try {
-    let info = { worldId, name: '', authorName: '', authorId: '', createdAt: '' };
-    const cached = storage.getWorldName(worldId);
-    if (cached && cached.name) {
-      info.name = cached.name || '';
-      info.authorName = cached.author_name || '';
-      info.authorId = cached.author_id || '';
-      info.createdAt = ''; // world_cache 无 created_at 列
-    } else if (api && rateLimiter) {
+    // 预检：读 world_kb 现有信息字段。created_at 已填 → 早退省 API；
+    // 未填则即使 world_cache 命中 name/author，也须调一次 API 取 created_at（#77 阻断项修复）。
+    const existing = storage.getWorldKbInfo(worldId);
+    const info = {
+      worldId,
+      name: existing.worldName,
+      authorName: existing.authorName,
+      authorId: existing.authorId,
+      createdAt: existing.createdAt,
+    };
+    const needApi = !info.createdAt;
+    if (needApi && api && rateLimiter) {
+      const cached = storage.getWorldName(worldId);
+      if (cached && cached.name) {
+        info.name = cached.name || '';
+        info.authorName = cached.author_name || '';
+        info.authorId = cached.author_id || '';
+      }
       const r = await rateLimiter.execute(() => api._request('GET', `/worlds/${encodeURIComponent(worldId)}`));
       if (r.status === 200 && r.data && r.data.name) {
-        info.name = r.data.name || '';
-        info.authorName = r.data.authorName || '';
-        info.authorId = r.data.authorId || '';
+        info.name = info.name || r.data.name || '';
+        info.authorName = info.authorName || r.data.authorName || '';
+        info.authorId = info.authorId || r.data.authorId || '';
         info.createdAt = r.data.created_at || '';
         try { storage.upsertWorld({ worldId, name: info.name, authorId: info.authorId, authorName: info.authorName }); } catch (e) { /* 缓存写失败不阻断 */ }
+      }
+    } else if (!needApi && !info.name) {
+      // created_at 已填但缺 name（罕见），补 world_cache / API
+      const cached = storage.getWorldName(worldId);
+      if (cached && cached.name) {
+        info.name = cached.name || '';
+        info.authorName = cached.author_name || '';
+        info.authorId = cached.author_id || '';
       }
     }
     return storage.backfillWorldKbInfo({
