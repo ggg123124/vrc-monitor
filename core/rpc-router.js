@@ -364,13 +364,13 @@ export async function handleRpc(rpc, session, res) {
             result = handleGetNewWorlds(args);
             break;
           case 'rate_world':
-            result = handleRateWorld(args);
+            result = await handleRateWorld(args);
             break;
           case 'mark_world_visited':
-            result = handleMarkWorldVisited(args);
+            result = await handleMarkWorldVisited(args);
             break;
           case 'add_to_backlog':
-            result = handleAddToBacklog(args);
+            result = await handleAddToBacklog(args);
             break;
           case 'get_backlog':
             result = handleGetBacklog(args);
