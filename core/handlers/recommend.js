@@ -37,7 +37,11 @@ function buildScoreContext() {
     for (const r of sw) sleepWorlds.add(r.world_id);
   } catch (e) { /* 表不存在/无数据按空处理 */ }
   const QUIET_RE = /(寝|眠|睡眠|睡觉|睡|sleep|quiet|静か|静寂|calm|relax|リラックス|ゆったり|安らぎ|癒し|冥想|meditation)/i;
-  const isQuietWorldName = (name) => typeof name === 'string' && QUIET_RE.test(name);
+  // #73：安静图判定同时纳入世界标签（author_tag_sleep），避免名不副实的睡觉图因名字无关键词而漏判。
+  const isQuietWorldName = (name, tags) => {
+    if (QUIET_RE.test(String(name || ''))) return true;
+    return Array.isArray(tags) && tags.includes('author_tag_sleep');
+  };
   return { joinPrefs, learning, isExplicitPref, CROWD, famMult, crowdMult, fullPenalty, coldPenalty, prefTag, sleepWorlds, isQuietWorldName };
 }
 
@@ -111,7 +115,7 @@ function computeEntryScore(scoreCtx, entry) {
     }
   }
   const isSleepWorld = loc.worldId && sleepWorlds.has(loc.worldId);
-  const isQuietWorld = isSleepWorld || isQuietWorldName(worldName);
+  const isQuietWorld = isSleepWorld || isQuietWorldName(worldName, worldTags);
   if (instanceUsers !== undefined) {
     if (isQuietWorld) {
       // 安静图：人少是理想状态，人多反而打扰（破坏氛围/电灯泡）
