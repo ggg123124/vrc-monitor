@@ -93,6 +93,7 @@
 - `VRC_MONITOR_BACKUP_DIR`：自动备份目录（默认 `<仓库>/backups`）。
 - `VRC_MONITOR_LOG_DIR`：常驻服务脚本的日志 / 修复记录目录（默认 `<仓库>/service-logs`，仅 `service-windows/` 脚本使用；Linux systemd 方案日志走 journald，无需设置）。
 - `VRC_MONITOR_PYTHON`：执行 fetch-otp.py 的 Python 解释器路径（默认 PATH 中的 `python`）。以计划任务 / systemd / 容器等方式运行且 PATH 中无 python 时必须设置，否则 OTP 自动登录失败会陷入重试循环（每次循环 VRChat 都会重新发送验证码邮件）。**路径含空格无需自带引号**（如 `C:\Program Files\Python311\python.exe`），脚本执行时会自动加引号。
+- `VRC_MONITOR_SAFE_MODE`：**安全模式开关**（默认关闭）。设为 `true` 时，服务启动后自动移除全部破坏性 MCP 工具（删除好友 `remove_friend`、删除相册照片 `remove_print`、删除画廊图片 `remove_gallery_image`、移除好友收藏 `unfavorite_friend`、退出群组 `leave_group`、拒绝好友请求 `decline_friend_request`、隐藏通知 `hide_notification`、移出待逛列表 `remove_from_backlog`、移出关注名单 `remove_from_watchlist`、移除 X 博主 `x_remove_creator` 等）：`tools/list` 不再暴露这些工具，`tools/call` 直接拦截报错，防止 Agent 误删数据。可在仓库根 `.env` 中配置（推荐，已被 .gitignore 排除）。
 
 ### 3. 启动服务
 

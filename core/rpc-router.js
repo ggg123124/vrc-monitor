@@ -8,6 +8,7 @@
 import { ctx, log } from './server-context.js';
 import { notifier } from './notifier.js';
 import { CUSTOM_TOOLS } from './mcp-definitions.js';
+import { filterTools, assertToolAllowed } from './safe-mode.js';
 import { sendSSE, sendError } from './http-server.js';
 
 // Handler imports
@@ -173,7 +174,8 @@ export async function handleRpc(rpc, session, res) {
     case 'tools/list': {
       sendSSE(res, [{
         jsonrpc: '2.0', id,
-        result: { tools: CUSTOM_TOOLS },
+        // 安全模式开启时过滤掉破坏性工具（客户端拿不到 = 调用不了）
+        result: { tools: filterTools(CUSTOM_TOOLS) },
       }], session.id);
       break;
     }
@@ -181,6 +183,8 @@ export async function handleRpc(rpc, session, res) {
     case 'tools/call': {
       const { name, arguments: args } = params;
       try {
+        // 安全模式：破坏性工具直接拦截（纵深防御，即使客户端持有旧工具清单也执行不了）
+        assertToolAllowed(name);
         let result;
 
         switch (name) {

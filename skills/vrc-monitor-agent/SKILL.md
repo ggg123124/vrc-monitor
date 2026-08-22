@@ -119,6 +119,16 @@ curl -s http://127.0.0.1:8799/mcp -X POST \
 
 响应是 SSE 格式，取 `data:` 行，解析 `result.content[0].text` 为 JSON。
 
+## 安全模式（VRC_MONITOR_SAFE_MODE，2026-08-22 新增）
+
+> 在仓库根 `.env` 或环境变量设置 `VRC_MONITOR_SAFE_MODE=true` 并重启服务后，**全部破坏性工具会被自动移除**（`tools/list` 不再暴露 + `tools/call` 直接拦截），防止 Agent 误执行删除/移除类操作。默认关闭。
+
+被移除的破坏性工具（删除/移除/退出/清除类，完整清单见 `core/safe-mode.js` 的 `DESTRUCTIVE_TOOLS`）：
+
+`remove_friend`（删好友）、`remove_print`（删相册照片）、`remove_gallery_image`（删画廊图片）、`unfavorite_friend`（移除好友收藏）、`leave_group`（退群）、`decline_friend_request`（拒好友请求）、`hide_notification`（清除通知）、`remove_from_backlog`（移出待逛）、`remove_from_watchlist`（移出关注）、`x_remove_creator`（移除 X 博主）。
+
+安全模式下这些工具**在 tools/list 中根本不存在**——Agent 不要尝试调用（会收到拦截报错）。查询/推荐/加好友/加收藏/开房等非破坏性写工具不受影响。关闭安全模式：`.env` 中改回 `VRC_MONITOR_SAFE_MODE=false`（或删掉该行）并重启服务。
+
 ## 核心查询工作流 → 已按对象域拆分
 
 > **2026-08-16 起查询工作流按域拆分**（本总纲保留工具表唯一权威 + 通用陷阱）：

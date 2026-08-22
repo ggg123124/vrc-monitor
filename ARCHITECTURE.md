@@ -55,6 +55,7 @@ VRChat WebSocket (wss://pipeline.vrchat.cloud)
 | `theme-config.js` | 51 | 主题关键词配置（sleep/chat/onsen/game/default 等）+ 正则编译 | `DEFAULT_THEME_CONFIG` / `getThemeRegex` |
 | `backup.js` | 73 | 数据库在线备份。better-sqlite3 `db.backup()` API，WAL 模式无需停机。保留最近 2 份，旧备份自动清理 | `backupDatabase()` 函数 |
 | `mcp-definitions.js` | 1056 | MCP 工具定义。name + description + inputSchema 纯数据，无运行时依赖 | `CUSTOM_TOOLS` 数组 |
+| `safe-mode.js` | 52 | 安全模式。`VRC_MONITOR_SAFE_MODE=true` 时从 `tools/list` 剔除并拦截 `tools/call` 破坏性工具（删除/移除/退出/清除类），防御误删 | `DESTRUCTIVE_TOOLS` / `isSafeModeEnabled` / `filterTools` / `assertToolAllowed` |
 | `server-context.js` | 66 | 共享上下文。可变 `ctx` 对象持有所有运行时状态（storage/api/rateLimiter/wsManager 等），`log()`、`parseLocation()`、watchlist 内存缓存管理 | `ctx` / `log` / `parseLocation` / `refreshWatchlistCache` / `invalidateWatchlistCache` |
 | `http-server.js` | 152 | HTTP 服务器 + SSE 端点。McpSession 管理、`sendSSE`/`sendError` 响应辅助、`/health` + `/mcp` 请求路由 | `createServer` / `sendSSE` / `sendError` |
 | `rpc-router.js` | 538 | RPC 分发。`handleRpc` 将 `tools/call` 映射到对应 handler，3 个内联 case（send_boop/send_invite/request_invite）直接访问 ctx.api | `handleRpc` |
@@ -110,6 +111,7 @@ start-monitor.js
   ├── core/mcp-definitions.js  (CUSTOM_TOOLS 纯数据)
   ├── core/http-server.js      (createServer, SSE 辅助)
   │     └── core/rpc-router.js (handleRpc)
+  │           ├── core/safe-mode.js（安全模式：tools/list 过滤 + tools/call 拦截）─┐
   │           ├── core/handlers/*（16 个文件，按功能域分拆）─┐
   │           └── core/notifier.js                          ├── server-context.js
   ├── core/otp-fetcher.js      （fetch-otp.py 调用）
