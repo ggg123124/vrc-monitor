@@ -65,16 +65,13 @@ export class Storage {
     if (!jcCols.some(c => c.name === 'world_tags')) {
       this._run(`ALTER TABLE join_choices ADD COLUMN world_tags TEXT DEFAULT ''`);
     }
-    // 迁移：旧库 world_kb 缺 tags/description/source 列（scan_new_worlds upsert 依赖，幂等）
+    // 迁移：旧库 world_kb 缺 tags/description 列（scan_new_worlds upsert 依赖，幂等）
     const nwCols2 = this._query(`PRAGMA table_info(world_kb)`);
     if (!nwCols2.some(c => c.name === 'tags')) {
       this._run(`ALTER TABLE world_kb ADD COLUMN tags TEXT DEFAULT ''`);
     }
     if (!nwCols2.some(c => c.name === 'description')) {
       this._run(`ALTER TABLE world_kb ADD COLUMN description TEXT DEFAULT ''`);
-    }
-    if (!nwCols2.some(c => c.name === 'source')) {
-      this._run(`ALTER TABLE world_kb ADD COLUMN source TEXT DEFAULT 'new'`);
     }
     // 迁移：旧库 world_kb 缺 user_rating 列（rate_world 用户反馈，幂等）
     const nwCols3 = this._query(`PRAGMA table_info(world_kb)`);
@@ -99,6 +96,13 @@ export class Storage {
     }
     if (!nwCols5.some(c => c.name === 'backlog_priority')) {
       this._run(`ALTER TABLE world_kb ADD COLUMN backlog_priority INTEGER DEFAULT 0`);
+    }
+    // 迁移：world_kb.source 是死列（issue #78）——从未被写入/读取，仅靠误导性注释自我解释，
+    // 与 events.source 同名易混淆，且 DDL 声称的「scan_new_worlds upsert 依赖」实际不存在。
+    // 幂等删除：PRAGMA 判列存在再 DROP（SQLite ≥3.35 支持；better-sqlite3 已满足）。
+    const nwCols6 = this._query(`PRAGMA table_info(world_kb)`);
+    if (nwCols6.some(c => c.name === 'source')) {
+      this._run(`ALTER TABLE world_kb DROP COLUMN source`);
     }
     // 迁移：历史 tags='' 脏数据统一为 '[]'（json_each 对空串抛 malformed JSON，Review R2）
     this._run(`UPDATE world_kb SET tags = '[]' WHERE tags IS NULL OR tags = ''`);
